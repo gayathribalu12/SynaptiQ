@@ -1,0 +1,62 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-[#0A0E1A] text-[#F3F4F6] font-sans antialiased;
+    background-image: 
+      radial-gradient(at 10% 20%, rgba(139, 92, 246, 0.08) 0px, transparent 50%),
+      radial-gradient(at 90% 80%, rgba(59, 130, 246, 0.08) 0px, transparent 50%);
+    background-attachment: fixed;
+  }
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0A0E1A;
+}
+::-webkit-scrollbar-thumb {
+  background: #1E2D4A;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3B82F6;
+}
+
+/* Glassmorphism panel styling */
+.glass-panel {
+  background: rgba(18, 26, 46, 0.7);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(30, 45, 74, 0.6);
+}
+
+/* Pulse glow effect for interactive items */
+@keyframes pulseGlow {
+  0%, 100% {
+    box-shadow: 0 0 10px rgba(59, 130, 246, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(59, 130, 246, 0.5);
+  }
+}
+
+.pulse-glow-blue {
+  animation: pulseGlow 2s infinite;
+}
+
+/* Neural node connection line animations */
+@keyframes dash {
+  to {
+    stroke-dashoffset: -20;
+  }
+}
+
+.pulse-line {
+  stroke-dasharray: 5;
+  animation: dash 1s linear infinite;
+}
