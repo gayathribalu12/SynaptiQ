@@ -1,0 +1,331 @@
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// 1. User
+model User {
+  id                   String                     @id @default(uuid())
+  email                String                     @unique
+  name                 String
+  passwordHash         String
+  createdAt            DateTime                   @default(now())
+  profile              LearnerProfile?
+  sessions             LearningSession[]
+  assessments          Assessment[]
+  attempts             Attempt[]
+  recommendations      Recommendation[]
+  conversations        Conversation[]
+  documents            Document[]
+  projects             Project[]
+  interviews           Interview[]
+  preferences          LearningPreference[]
+  predictions          LearningPrediction[]
+  revisions            RevisionSchedule[]
+  visualInteractions   VisualizationInteraction[]
+  mistakes             Mistake[]
+}
+
+// 2. LearnerProfile
+model LearnerProfile {
+  id                 String             @id @default(uuid())
+  userId             String             @unique
+  user               User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  educationLevel     String             // "high_school", "undergraduate", "graduate", "professional"
+  branchField        String             // e.g. "Computer Science", "Information Technology"
+  experienceLevel    String             // "beginner", "intermediate", "advanced"
+  dailyAvailability  Int                // in minutes
+  timelineMonths     Int                // e.g., 3, 6, 12 months
+  careerGoals        CareerGoal[]
+  skills             LearnerSkill[]
+}
+
+// 3. CareerGoal
+model CareerGoal {
+  id               String            @id @default(uuid())
+  profileId        String
+  profile          LearnerProfile    @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  careerTitle      String            // e.g. "AI Engineer"
+  targetCompetency String            // "internship", "junior", "senior"
+  targetSkills     CareerSkill[]
+}
+
+// 4. CareerSkill
+model CareerSkill {
+  id                  String     @id @default(uuid())
+  careerGoalId        String
+  careerGoal          CareerGoal @relation(fields: [careerGoalId], references: [id], onDelete: Cascade)
+  skillId             String
+  skill               Skill      @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  requiredMastery     Float      // e.g. 0.85
+}
+
+// 5. Skill
+model Skill {
+  id                 String              @id // e.g. "python", "dsa", "ml", "neural_networks"
+  name               String
+  category           String              // e.g. "Programming", "Math", "AI", "Data Structures"
+  difficulty         String              // "beginner", "intermediate", "advanced"
+  prerequisites      SkillPrerequisite[] @relation("SkillPrerequisites")
+  dependents         SkillPrerequisite[] @relation("SkillDependents")
+  careerSkills       CareerSkill[]
+  learnerSkills      LearnerSkill[]
+  questions          Question[]
+  resources          Resource[]
+  predictions        LearningPrediction[]
+  revisions          RevisionSchedule[]
+  visualizations     Visualization[]
+  mistakes           Mistake[]
+}
+
+// 6. SkillPrerequisite
+model SkillPrerequisite {
+  id                 String   @id @default(uuid())
+  skillId            String
+  prerequisiteId     String
+  skill              Skill    @relation("SkillPrerequisites", fields: [skillId], references: [id], onDelete: Cascade)
+  prerequisite       Skill    @relation("SkillDependents", fields: [prerequisiteId], references: [id], onDelete: Cascade)
+  @@unique([skillId, prerequisiteId])
+}
+
+// 7. LearnerSkill
+model LearnerSkill {
+  id                   String         @id @default(uuid())
+  profileId            String
+  profile              LearnerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  skillId              String
+  skill                Skill          @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  mastery              Float          // 0.0 to 1.0
+  confidence           Float          // 0.0 to 1.0
+  retention            Float          // 0.0 to 1.0 (Forgetting Prediction output)
+  struggleProbability  Float          // 0.0 to 1.0 (Struggle Prediction output)
+  lastPracticed        DateTime       @default(now())
+  @@unique([profileId, skillId])
+}
+
+// 8. Course
+model Course {
+  id          String     @id @default(uuid())
+  title       String
+  description String
+  resources   Resource[]
+}
+
+// 9. Resource
+model Resource {
+  id              String           @id @default(uuid())
+  courseId        String?
+  course          Course?          @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  skillId         String
+  skill           Skill            @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  title           String
+  type            String           // "text", "video", "simulation_3d", "interactive"
+  url             String
+  difficulty      String           // "beginner", "intermediate", "advanced"
+  recommendations Recommendation[]
+}
+
+// 10. Recommendation
+model Recommendation {
+  id                   String    @id @default(uuid())
+  userId               String
+  user                 User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resourceId           String
+  resource             Resource  @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  recommendedFormat    String    // "3d", "video", "text", "code"
+  confidenceScore      Float     // 0.0 to 1.0
+  whyReason            String    // Explainable AI text
+  clicked              Boolean   @default(false)
+  completed            Boolean   @default(false)
+  createdAt            DateTime  @default(now())
+}
+
+// 11. LearningSession
+model LearningSession {
+  id        String          @id @default(uuid())
+  userId    String
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  startedAt DateTime        @default(now())
+  endedAt   DateTime?
+  duration  Int             @default(0) // duration in seconds
+  events    LearningEvent[]
+}
+
+// 12. LearningEvent
+model LearningEvent {
+  id                 String          @id @default(uuid())
+  sessionId          String
+  session            LearningSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  type               String          // "lesson_started", "lesson_completed", "video_watched", etc.
+  timestamp          DateTime        @default(now())
+  metadata           String          // JSON string for generic payload
+}
+
+// 13. Assessment
+model Assessment {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type        String    // "diagnostic", "adaptive", "quiz"
+  score       Int       // out of 100
+  passed      Boolean
+  startedAt   DateTime  @default(now())
+  completedAt DateTime  @default(now())
+}
+
+// 14. Question
+model Question {
+  id            String    @id @default(uuid())
+  skillId       String
+  skill         Skill     @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  questionText  String
+  options       String    // JSON array of strings
+  correctOption Int       // index of correct option
+  difficulty    String    // "beginner", "intermediate", "advanced"
+  attempts      Attempt[]
+}
+
+// 15. Attempt
+model Attempt {
+  id                String    @id @default(uuid())
+  userId            String
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  questionId        String
+  question          Question  @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  answeredCorrectly Boolean
+  selectedOption    Int
+  timestamp         DateTime  @default(now())
+}
+
+// 16. Mistake
+model Mistake {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skillId     String
+  skill       Skill    @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  errorType   String   // "off-by-one", "recursion_base_case", "null_pointer", "overfitting"
+  count       Int      @default(0)
+  lastUpdated DateTime @default(now())
+}
+
+// 17. LearningPreference
+model LearningPreference {
+  id                String   @id @default(uuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  format            String   // "3d", "code", "video", "text"
+  preferenceScore   Float    // effectiveness rating (0.0 to 1.0)
+  timesSelected     Int      @default(0)
+}
+
+// 18. LearningPrediction
+model LearningPrediction {
+  id                  String   @id @default(uuid())
+  userId              String
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skillId             String
+  skill               Skill    @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  struggleProbability Float
+  forgettingDecayRate Float    // lambda parameter for half-life
+  predictedRetention  Float
+  calculatedAt        DateTime @default(now())
+}
+
+// 19. RevisionSchedule
+model RevisionSchedule {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skillId      String
+  skill        Skill    @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  scheduledFor DateTime
+  completed    Boolean  @default(false)
+}
+
+// 20. Project
+model Project {
+  id               String   @id @default(uuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title            String
+  difficulty       String   // "beginner", "intermediate", "advanced", "industry"
+  problemStatement String
+  requirements     String   // JSON string of arrays
+  milestones       String   // JSON string of arrays
+  skillsUsed       String   // JSON string list of skill IDs
+  status           String   // "not_started", "started", "completed"
+  score            Int?
+  feedback         String?
+}
+
+// 21. Interview
+model Interview {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type       String   // "hr", "technical", "coding", "ml"
+  transcript String   // JSON log of chat messages
+  score      Int
+  feedback   String
+  createdAt  DateTime @default(now())
+}
+
+// 22. Document
+model Document {
+  id        String          @id @default(uuid())
+  userId    String
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  filename  String
+  filetype  String
+  content   String
+  createdAt DateTime        @default(now())
+  chunks    DocumentChunk[]
+}
+
+// 23. DocumentChunk
+model DocumentChunk {
+  id         String   @id @default(uuid())
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  chunkIndex Int
+  content    String
+  embedding  String   // comma-separated float representation
+}
+
+// 24. Conversation
+model Conversation {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  topic     String
+  messages  String   // JSON string of chat history
+  createdAt DateTime @default(now())
+}
+
+// 25. Visualization
+model Visualization {
+  id           String                     @id // "binary_tree", "linked_list", "graph", "neural_network", "gradient_descent"
+  skillId      String
+  skill        Skill                      @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  name         String
+  description  String
+  interactions VisualizationInteraction[]
+}
+
+// 26. VisualizationInteraction
+model VisualizationInteraction {
+  id              String        @id @default(uuid())
+  userId          String
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  visualizationId String
+  visualization   Visualization @relation(fields: [visualizationId], references: [id], onDelete: Cascade)
+  timeSpent       Int           // in seconds
+  stepsCompleted  Int
+  completed       Boolean       @default(false)
+  createdAt       DateTime      @default(now())
+}
