@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import ThreeDLearningLab from '../components/ThreeDLearningLab';
 import { 
   Play, ChevronRight, Sparkles, Brain, Database, Cpu, 
-  Activity, Star, RefreshCw, HelpCircle, Code, ShieldCheck, ArrowRight
+  Activity, Star, RefreshCw, HelpCircle, Code, ShieldCheck, ArrowRight,
+  Calendar, Award
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -160,44 +161,144 @@ export default function Demo() {
     return () => clearInterval(timer);
   }, [isPlaying]);
 
+  const syncStepWithBackend = async (stepNum: number) => {
+    try {
+      if (stepNum === 1) {
+        const res = await fetch('/api/twin/dashboard');
+        const data = await res.json();
+        setTwinStats({
+          mastery: 35,
+          retention: 55,
+          struggleProb: 50,
+          readiness: data.careerReadiness || 54,
+          streak: 8,
+          banditWeights: {
+            '3d': data.preferences['3d'] || 85,
+            'code': data.preferences['code'] || 78,
+            'text': data.preferences['text'] || 41
+          }
+        });
+      }
+
+      if (stepNum === 5) {
+        // Log real WebGL 3D interaction event to backend
+        const res = await fetch('/api/events', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            eventType: 'visualization_completed',
+            skillId: 'gradient_descent',
+            payload: { vizId: 'gradient_descent', timeSpent: 120, stepsCompleted: 25, completed: true }
+          })
+        });
+        const eventData = await res.json();
+
+        // Query fresh dashboard to load actual preference score boosts
+        const dashRes = await fetch('/api/twin/dashboard');
+        const dashData = await dashRes.json();
+        const gdSkill = dashData.skills.find((s: any) => s.id === 'gradient_descent');
+
+        setTwinStats(prev => ({
+          ...prev,
+          mastery: gdSkill ? gdSkill.mastery : 43,
+          banditWeights: {
+            '3d': dashData.preferences['3d'] || 94,
+            'code': dashData.preferences['code'] || 78,
+            'text': dashData.preferences['text'] || 41
+          }
+        }));
+      }
+
+      if (stepNum === 7) {
+        // Log real incorrect attempt to backend triggers (BKT + Mistakes)
+        const quizRes = await fetch('/api/assessment/quiz?skillId=gradient_descent');
+        const questionsList = await quizRes.json();
+        const qId = questionsList[0]?.id || 'q5';
+
+        const res = await fetch('/api/events', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            eventType: 'question_answered',
+            skillId: 'gradient_descent',
+            payload: { correct: false, questionId: qId, selectedOption: 0, mistakeType: 'learning_rate_overshoot' }
+          })
+        });
+        const eventData = await res.json();
+
+        const dashRes = await fetch('/api/twin/dashboard');
+        const dashData = await dashRes.json();
+        const gdSkill = dashData.skills.find((s: any) => s.id === 'gradient_descent');
+
+        setTwinStats(prev => ({
+          ...prev,
+          mastery: gdSkill ? gdSkill.mastery : 18,
+          struggleProb: gdSkill ? gdSkill.struggleProbability : 92,
+          readiness: dashData.careerReadiness
+        }));
+      }
+
+      if (stepNum === 12) {
+        // Log real correct attempt (BKT mastery recovery)
+        const quizRes = await fetch('/api/assessment/quiz?skillId=gradient_descent');
+        const questionsList = await quizRes.json();
+        const qId = questionsList[0]?.id || 'q5';
+
+        const res = await fetch('/api/events', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            eventType: 'question_answered',
+            skillId: 'gradient_descent',
+            payload: { correct: true, questionId: qId, selectedOption: 1 }
+          })
+        });
+        const eventData = await res.json();
+
+        const dashRes = await fetch('/api/twin/dashboard');
+        const dashData = await dashRes.json();
+        const gdSkill = dashData.skills.find((s: any) => s.id === 'gradient_descent');
+
+        setTwinStats(prev => ({
+          ...prev,
+          mastery: gdSkill ? gdSkill.mastery : 74,
+          struggleProb: gdSkill ? gdSkill.struggleProbability : 15,
+          readiness: dashData.careerReadiness
+        }));
+      }
+
+      if (stepNum === 15) {
+        // Log real interview transcript answers
+        await fetch('/api/interview/evaluate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            question: 'Explain how you mitigate overfitting in random forest classifiers.',
+            answer: 'I would apply L2 regularization and data validation techniques.',
+            skillId: 'ml'
+          })
+        });
+      }
+
+      if (stepNum === 17) {
+        const dashRes = await fetch('/api/twin/dashboard');
+        const dashData = await dashRes.json();
+        setTwinStats(prev => ({
+          ...prev,
+          readiness: dashData.careerReadiness
+        }));
+      }
+    } catch (e) {
+      console.warn('Demo step sync skipped', e);
+    }
+  };
+
   // Sync twin statistics and logs depending on the step
   useEffect(() => {
     const current = demoSteps[step - 1];
     if (current) {
       setTelemetryLogs(prev => [...prev.slice(-10), `[Step ${step}] ${current.log}`]);
-
-      // Adjust mock stats dynamically to show updates clearly
-      if (step <= 8) {
-        setTwinStats(prev => ({
-          ...prev,
-          mastery: 35,
-          struggleProb: 50,
-          readiness: 54,
-          banditWeights: { '3d': 85, 'code': 78, 'text': 41 }
-        }));
-      } else if (step === 9 || step === 10) {
-        setTwinStats(prev => ({
-          ...prev,
-          mastery: 18,
-          struggleProb: 92,
-          readiness: 51
-        }));
-      } else if (step >= 12 && step <= 16) {
-        setTwinStats(prev => ({
-          ...prev,
-          mastery: 74,
-          struggleProb: 15,
-          readiness: 56,
-          banditWeights: { '3d': 94, 'code': 82, 'text': 41 } // 3D weight boosted after interaction
-        }));
-      } else if (step === 17) {
-        setTwinStats(prev => ({
-          ...prev,
-          mastery: 85,
-          struggleProb: 10,
-          readiness: 68
-        }));
-      }
+      syncStepWithBackend(step);
     }
   }, [step]);
 

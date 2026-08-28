@@ -5,8 +5,10 @@ import dotenv from 'dotenv';
 import prisma from './db';
 import { calculateBKT } from './services/knowledgeTracing';
 import { predictRetention, predictStruggle, calculateCareerReadiness } from './services/predictiveEngine';
-import { recommendNextAction, updateContextualBandit } from './services/recommendationEngine';
-import { analyzeGoal, analyzeResume, tutorChat, generateProject, evaluateInterview } from './services/aiOrchestrator';
+import { recommendNextAction } from './services/recommendationEngine';
+import { selectOptimalFormatAI } from './services/optimalVisualLearning';
+import { processLearningEvent } from './services/learningTwinService';
+import { analyzeGoal, analyzeResume, tutorChat, generateProject, evaluateInterview, getMisconceptionIntervention } from './services/aiOrchestrator';
 
 dotenv.config();
 
@@ -14,7 +16,7 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 app.use(helmet({
-  contentSecurityPolicy: false // disable CSP for local easy routing and 3D textures if needed
+  contentSecurityPolicy: false
 }));
 app.use(cors());
 app.use(express.json());
@@ -30,7 +32,26 @@ async function getDemoUser() {
   return user;
 }
 
-// 1. Get Learner Profile & Twin Stats
+// 1. Unified Event Ingestion Endpoint
+app.post('/api/events', async (req, res) => {
+  const { eventType, skillId, payload } = req.body;
+  try {
+    const user = await getDemoUser();
+    
+    // Process the telemetry update in the learning twin loop
+    const result = await processLearningEvent(user.id, eventType, skillId, payload);
+    
+    res.json({
+      success: true,
+      message: 'Learning Event tracked and twin state synchronized.',
+      result
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 2. Get Learner Profile & Twin Stats
 app.get('/api/twin/dashboard', async (req, res) => {
   try {
     const user = await getDemoUser();
@@ -48,14 +69,12 @@ app.get('/api/twin/dashboard', async (req, res) => {
       ? await calculateCareerReadiness(profile.id, goal.id)
       : { overallScore: 0, breakdown: {} };
 
-    // Calculate overall average mastery and retention
     let sumMastery = 0;
     let sumRetention = 0;
     let totalSkills = profile.skills.length;
 
     for (const ls of profile.skills) {
       sumMastery += ls.mastery;
-      // Recalculate retention based on time elapsed
       const elapsedDays = (Date.now() - new Date(ls.lastPracticed).getTime()) / (24 * 60 * 60 * 1000);
       const repObj = await prisma.attempt.count({
         where: { userId: user.id, question: { skillId: ls.skillId } }
@@ -63,7 +82,6 @@ app.get('/api/twin/dashboard', async (req, res) => {
       const updatedRet = predictRetention(ls.mastery, elapsedDays, Math.max(1, repObj));
       sumRetention += updatedRet;
 
-      // Update retention in db in background
       await prisma.learnerSkill.update({
         where: { id: ls.id },
         data: { retention: updatedRet }
@@ -73,8 +91,12 @@ app.get('/api/twin/dashboard', async (req, res) => {
     const averageMastery = totalSkills > 0 ? sumMastery / totalSkills : 0;
     const averageRetention = totalSkills > 0 ? sumRetention / totalSkills : 0;
 
-    // Get learning preferences
     const preferences = await prisma.learningPreference.findMany({
+      where: { userId: user.id }
+    });
+
+    // Check if there are recurring mistakes for trace overlay
+    const mistakes = await prisma.mistake.findMany({
       where: { userId: user.id }
     });
 
@@ -82,7 +104,7 @@ app.get('/api/twin/dashboard', async (req, res) => {
       name: user.name,
       overallMastery: Math.round(averageMastery * 100),
       careerReadiness: readinessResult.overallScore,
-      learningVelocity: 12, // mock constant progression rate
+      learningVelocity: 12,
       retention: Math.round(averageRetention * 100),
       streak: 8,
       predictedSuccess: Math.round((averageMastery * 0.7 + averageRetention * 0.3) * 100),
@@ -98,14 +120,19 @@ app.get('/api/twin/dashboard', async (req, res) => {
       preferences: preferences.reduce((acc, curr) => {
         acc[curr.format] = Math.round(curr.preferenceScore * 100);
         return acc;
-      }, {} as Record<string, number>)
+      }, {} as Record<string, number>),
+      mistakes: mistakes.map(m => ({
+        skillId: m.skillId,
+        errorType: m.errorType,
+        count: m.count
+      }))
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// 2. Skill Graph nodes and links
+// 3. Skill Graph nodes and links
 app.get('/api/skills/graph', async (req, res) => {
   try {
     const user = await getDemoUser();
@@ -128,7 +155,6 @@ app.get('/api/skills/graph', async (req, res) => {
       else if (mastery >= 0.30) status = 'learning';
       else if (mastery > 0) status = 'weak';
       else {
-        // check if prereqs are met
         const prereqs = s.prerequisites;
         const prereqsMet = prereqs.every(p => {
           const pls = profile?.skills.find(x => x.skillId === p.prerequisiteId);
@@ -163,7 +189,7 @@ app.get('/api/skills/graph', async (req, res) => {
   }
 });
 
-// 3. Dynamic Adaptive Roadmap
+// 4. Dynamic Adaptive Roadmap
 app.get('/api/roadmap', async (req, res) => {
   try {
     const user = await getDemoUser();
@@ -174,8 +200,6 @@ app.get('/api/roadmap', async (req, res) => {
 
     if (!profile) return res.status(404).json({ error: 'Profile not found' });
 
-    // Build timeline milestones. We create months adaptive sequence.
-    // Order skills by hierarchy: Python/Math first, ML/DSA intermediate, DL/NLP/RAG advanced
     const skills = [...profile.skills].sort((a, b) => {
       const diffMap: Record<string, number> = { beginner: 1, intermediate: 2, advanced: 3 };
       return diffMap[a.skill.difficulty] - diffMap[b.skill.difficulty];
@@ -208,14 +232,17 @@ app.get('/api/roadmap', async (req, res) => {
       });
     }
 
-    // Check if there are active revision items to dynamically insert
     const activeRevisions = await prisma.revisionSchedule.findMany({
       where: { userId: user.id, completed: false },
       include: { skill: true }
     });
 
+    let adapted = false;
+    let adaptationReason = '';
+
     if (activeRevisions.length > 0) {
-      // Dynamic insert revision milestone alert at Month 1 / active month
+      adapted = true;
+      adaptationReason = `Prerequisite gap flagged in ${activeRevisions[0].skill.name}. Pause successor milestones to resolve weakness.`;
       milestones.unshift({
         month: 0,
         title: '⚠️ Dynamic Revision Interventions',
@@ -228,13 +255,70 @@ app.get('/api/roadmap', async (req, res) => {
       });
     }
 
-    res.json({ milestones });
+    res.json({ milestones, adapted, adaptationReason });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// 4. Onboarding Endpoints
+// 5. Get Learner-Specific Optimal Learning Format AI Decision
+app.get('/api/optimal-format', async (req, res) => {
+  const { skillId } = req.query;
+  try {
+    const user = await getDemoUser();
+    const decision = await selectOptimalFormatAI(user.id, String(skillId || 'ml'));
+    res.json(decision);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 6. Get Misconception Targeted Intervention
+app.get('/api/misconceptions/intervention', async (req, res) => {
+  const { skillId } = req.query;
+  try {
+    const user = await getDemoUser();
+    const intervention = await getMisconceptionIntervention(user.id, String(skillId || 'ml'));
+    res.json({ intervention });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 7. Grounded RAG Document Chunk Upload
+app.post('/api/documents/upload', async (req, res) => {
+  const { filename, content } = req.body;
+  try {
+    const user = await getDemoUser();
+    const doc = await prisma.document.create({
+      data: {
+        userId: user.id,
+        filename: filename || 'notes.txt',
+        filetype: 'text',
+        content: content || ''
+      }
+    });
+
+    // Chunk by paragraphs
+    const paragraphs = content.split('\n').filter((p: string) => p.trim().length > 10);
+    for (let i = 0; i < paragraphs.length; i++) {
+      await prisma.documentChunk.create({
+        data: {
+          documentId: doc.id,
+          chunkIndex: i,
+          content: paragraphs[i].trim(),
+          embedding: '0.0' // baseline placeholder
+        }
+      });
+    }
+
+    res.json({ success: true, documentId: doc.id, chunksCreated: paragraphs.length });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 8. Onboarding Endpoints
 app.post('/api/onboard/analyze-goal', async (req, res) => {
   const { goal } = req.body;
   if (!goal) return res.status(400).json({ error: 'Goal text is required' });
@@ -257,58 +341,30 @@ app.post('/api/onboard/analyze-resume', async (req, res) => {
   }
 });
 
-// 5. Get Explainable Recommendation
+// 9. Get Explainable Recommendation
 app.get('/api/recommendation', async (req, res) => {
   try {
     const user = await getDemoUser();
     const rec = await recommendNextAction(user.id);
-    
-    // Save recommendation to database
-    if (rec.recommendedResource) {
-      await prisma.recommendation.create({
-        data: {
-          userId: user.id,
-          resourceId: rec.recommendedResource.id,
-          recommendedFormat: rec.recommendedFormat,
-          confidenceScore: rec.confidence,
-          whyReason: rec.reason
-        }
-      });
-    }
-
     res.json(rec);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// 6. Contextual AI Tutor Chat
+// 10. Contextual AI Tutor Chat
 app.post('/api/tutor/chat', async (req, res) => {
   const { message, topic, mode, history } = req.body;
   try {
     const user = await getDemoUser();
     const response = await tutorChat(user.id, message, topic || 'general', mode || 'explain', history || []);
-    
-    // Save conversation log
-    await prisma.conversation.create({
-      data: {
-        userId: user.id,
-        topic: topic || 'general',
-        messages: JSON.stringify([
-          ...(history || []),
-          { role: 'user', content: message },
-          { role: 'assistant', content: response.text }
-        ])
-      }
-    });
-
     res.json(response);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// 7. Get Quiz Questions for Skill
+// 11. Get Quiz Questions for Skill
 app.get('/api/assessment/quiz', async (req, res) => {
   const { skillId } = req.query;
   try {
@@ -316,7 +372,6 @@ app.get('/api/assessment/quiz', async (req, res) => {
       where: skillId ? { skillId: String(skillId) } : {}
     });
 
-    // Format options before sending
     const formatted = questions.map(q => ({
       id: q.id,
       skillId: q.skillId,
@@ -331,7 +386,7 @@ app.get('/api/assessment/quiz', async (req, res) => {
   }
 });
 
-// 8. Submit Quiz Question - Updates Learning Twin via Bayesian Knowledge Tracing
+// 12. Submit Quiz Question - Reroutes directly through our closed-loop Event Telemetry pipeline
 app.post('/api/assessment/submit', async (req, res) => {
   const { questionId, selectedOption } = req.body;
   try {
@@ -342,104 +397,15 @@ app.post('/api/assessment/submit', async (req, res) => {
     });
 
     if (!question) return res.status(404).json({ error: 'Question not found' });
-
     const correct = question.correctOption === selectedOption;
 
-    // Log the attempt
-    await prisma.attempt.create({
-      data: {
-        userId: user.id,
-        questionId: question.id,
-        answeredCorrectly: correct,
-        selectedOption
-      }
+    // Direct event pipeline call
+    const eventRes = await processLearningEvent(user.id, 'question_answered', question.skillId, {
+      correct,
+      questionId,
+      selectedOption,
+      mistakeType: question.skillId === 'ml' ? 'overfitting' : question.skillId === 'gradient_descent' ? 'learning_rate_overshoot' : 'conceptual'
     });
-
-    // Look up mistake counts for this skill
-    let mistake = await prisma.mistake.findFirst({
-      where: { userId: user.id, skillId: question.skillId }
-    });
-
-    if (!correct) {
-      if (!mistake) {
-        mistake = await prisma.mistake.create({
-          data: {
-            userId: user.id,
-            skillId: question.skillId,
-            errorType: question.skillId === 'ml' ? 'overfitting' : 'conceptual',
-            count: 1
-          }
-        });
-      } else {
-        mistake = await prisma.mistake.update({
-          where: { id: mistake.id },
-          data: { count: mistake.count + 1, lastUpdated: new Date() }
-        });
-      }
-    }
-
-    const mistakeCount = mistake ? mistake.count : 0;
-
-    // Retrieve previous mastery
-    const profile = await prisma.learnerProfile.findUnique({
-      where: { userId: user.id }
-    });
-
-    if (!profile) return res.status(404).json({ error: 'Learner profile not found' });
-
-    const learnerSkill = await prisma.learnerSkill.findFirst({
-      where: { profileId: profile.id, skillId: question.skillId }
-    });
-
-    const currentMastery = learnerSkill ? learnerSkill.mastery : 0.15; // default prior
-
-    // Run BKT calculations!
-    const { mastery, confidence } = calculateBKT(currentMastery, correct, mistakeCount);
-
-    // Predict upcoming struggle
-    const struggleProb = await predictStruggle(profile.id, question.skillId);
-
-    // Update the Learning Twin database profile
-    if (learnerSkill) {
-      await prisma.learnerSkill.update({
-        where: { id: learnerSkill.id },
-        data: {
-          mastery,
-          confidence,
-          struggleProbability: struggleProb,
-          lastPracticed: new Date()
-        }
-      });
-    } else {
-      await prisma.learnerSkill.create({
-        data: {
-          profileId: profile.id,
-          skillId: question.skillId,
-          mastery,
-          confidence,
-          retention: 0.95,
-          struggleProbability: struggleProb,
-          lastPracticed: new Date()
-        }
-      });
-    }
-
-    // Dynamic Roadmap adaptation trigger: 
-    // If they got it wrong and mastery falls below 0.35, insert revision schedule
-    if (!correct && mastery < 0.35) {
-      const existingRevision = await prisma.revisionSchedule.findFirst({
-        where: { userId: user.id, skillId: question.skillId, completed: false }
-      });
-      if (!existingRevision) {
-        await prisma.revisionSchedule.create({
-          data: {
-            userId: user.id,
-            skillId: question.skillId,
-            scheduledFor: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000) // in 2 days
-          }
-        });
-      }
-    }
 
     res.json({
       correct,
@@ -447,15 +413,17 @@ app.post('/api/assessment/submit', async (req, res) => {
       feedback: correct 
         ? 'Correct answer! Your skill mastery has increased.' 
         : `Incorrect. Your Learning Twin detected a gap in ${question.skill.name}. Prerequisite revision is recommended.`,
-      newMastery: Math.round(mastery * 100),
-      newConfidence: Math.round(confidence * 100)
+      newMastery: eventRes.newMastery,
+      newConfidence: eventRes.newConfidence,
+      roadmapAdapted: eventRes.roadmapAdapted,
+      roadmapReason: eventRes.roadmapReason
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// 9. 3D Lab Interaction Telemetry - Contextual Bandit loop update
+// 13. 3D Lab Interaction Telemetry - Reroutes directly through Event Telemetry pipeline
 app.post('/api/visualization/interact', async (req, res) => {
   const { vizId, timeSpent, stepsCompleted, completed } = req.body;
   try {
@@ -466,54 +434,17 @@ app.post('/api/visualization/interact', async (req, res) => {
 
     if (!viz) return res.status(404).json({ error: 'Visualization not found' });
 
-    // Track the interaction event
-    await prisma.visualizationInteraction.create({
-      data: {
-        userId: user.id,
-        visualizationId: viz.id,
-        timeSpent: Number(timeSpent || 0),
-        stepsCompleted: Number(stepsCompleted || 0),
-        completed: Boolean(completed)
-      }
-    });
-
-    // Update Contextual Bandit preference score
-    // In our seed, 3D visual has baseline score. If student completes this step-by-step 3D,
-    // we increase 3D preference weight.
-    const profile = await prisma.learnerProfile.findUnique({
-      where: { userId: user.id }
-    });
-
-    const learnerSkill = await prisma.learnerSkill.findFirst({
-      where: { profileId: profile!.id, skillId: viz.skillId }
-    });
-
-    const scoreBefore = learnerSkill ? learnerSkill.mastery : 0.2;
-    // Boost mastery slightly by viewing the visual representation (Visual learning effectiveness)
-    const scoreAfter = Math.min(0.95, scoreBefore + (completed ? 0.08 : 0.02));
-
-    if (learnerSkill) {
-      await prisma.learnerSkill.update({
-        where: { id: learnerSkill.id },
-        data: { 
-          mastery: scoreAfter,
-          lastPracticed: new Date()
-        }
-      });
-    }
-
-    // Trigger Bandit preferences reinforcement learning update!
-    await updateContextualBandit(user.id, '3d', {
-      completed: Boolean(completed),
-      scoreBefore,
-      scoreAfter,
-      timeSpentSec: Number(timeSpent || 60),
-      expectedTimeSec: 180 // Expect 3 minutes for deep interaction
+    // Track the interaction using unified pipeline
+    const eventRes = await processLearningEvent(user.id, 'visualization_completed', viz.skillId, {
+      vizId,
+      timeSpent: Number(timeSpent || 60),
+      stepsCompleted: Number(stepsCompleted || 0),
+      completed: Boolean(completed)
     });
 
     res.json({
       success: true,
-      masteryBoost: Math.round((scoreAfter - scoreBefore) * 100),
+      masteryBoost: eventRes.newMastery,
       message: 'Learning Twin telemetry updated with 3D interaction metrics.'
     });
   } catch (error: any) {
@@ -521,14 +452,13 @@ app.post('/api/visualization/interact', async (req, res) => {
   }
 });
 
-// 10. Generate AI Project
+// 14. Generate AI Project
 app.get('/api/project/generate', async (req, res) => {
   const { skillId } = req.query;
   try {
     const user = await getDemoUser();
     const proj = await generateProject(user.id, String(skillId || 'ml'));
 
-    // Save project
     const dbProj = await prisma.project.create({
       data: {
         userId: user.id,
@@ -554,42 +484,18 @@ app.get('/api/project/generate', async (req, res) => {
   }
 });
 
-// 11. Interview Simulation
+// 15. Interview Evaluation Evaluator
 app.post('/api/interview/evaluate', async (req, res) => {
-  const { question, answer } = req.body;
+  const { question, answer, skillId } = req.body;
   try {
     const user = await getDemoUser();
     const evalRes = await evaluateInterview(question, answer);
 
-    // Save interview log
-    await prisma.interview.create({
-      data: {
-        userId: user.id,
-        type: 'technical',
-        transcript: JSON.stringify([{ role: 'interviewer', content: question }, { role: 'user', content: answer }]),
-        score: evalRes.score,
-        feedback: evalRes.feedback
-      }
+    // Direct event pipeline call
+    await processLearningEvent(user.id, 'interview_completed', skillId || 'ml', {
+      score: evalRes.score,
+      feedback: evalRes.feedback
     });
-
-    // Update Career Readiness telemetry based on interview performance
-    if (evalRes.score > 70) {
-      // Find ML skill and boost confidence
-      const profile = await prisma.learnerProfile.findUnique({
-        where: { userId: user.id }
-      });
-      if (profile) {
-        const mlSkill = await prisma.learnerSkill.findFirst({
-          where: { profileId: profile.id, skillId: 'ml' }
-        });
-        if (mlSkill) {
-          await prisma.learnerSkill.update({
-            where: { id: mlSkill.id },
-            data: { confidence: Math.min(0.99, mlSkill.confidence + 0.05) }
-          });
-        }
-      }
-    }
 
     res.json(evalRes);
   } catch (error: any) {

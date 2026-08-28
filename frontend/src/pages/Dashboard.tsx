@@ -202,7 +202,7 @@ export default function Dashboard({ onNavigate, setSelectedSkillId }: DashboardP
             <h3 className="text-xs font-bold font-mono text-gray-300 uppercase">🧠 OPTIMAL FORMAT EFFECTIVENESS (BANDIT)</h3>
             <div className="h-44">
               <ResponsiveContainer width="100%" height="100%">
-                <RadarChart cx="50%" cy="50%" radius="70%" data={radarData}>
+                <RadarChart cx="50%" cy="50%" outerRadius="70%" data={radarData}>
                   <PolarGrid stroke="#1E2D4A" />
                   <PolarAngleAxis dataKey="format" tick={{ fill: '#9CA3AF', fontSize: 10, fontFamily: 'monospace' }} />
                   <PolarRadiusAxis angle={30} domain={[0, 100]} tick={{ fill: '#4B5563' }} />

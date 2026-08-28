@@ -13,6 +13,7 @@ export default function ThreeDLearningLab({ simulationId, onInteractionComplete 
   const [isRunning, setIsRunning] = useState(false);
   const [treeValue, setTreeValue] = useState('45');
   const [instructions, setInstructions] = useState('');
+  const [resetKey, setResetKey] = useState(0);
 
   // Refs to allow canvas interaction updates from outside animation loop
   const currentSimId = useRef(simulationId);
@@ -20,16 +21,39 @@ export default function ThreeDLearningLab({ simulationId, onInteractionComplete 
   const isRunningRef = useRef(isRunning);
   const actionTriggerRef = useRef<string | null>(null);
 
+  const track3DTelemetry = async (action: string, metadata: any = {}) => {
+    try {
+      await fetch('/api/events', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          eventType: 'visualization_interacted',
+          skillId: (simulationId as string) === 'gradient_descent' ? 'gradient_descent' : (simulationId as string) === 'neural_network' ? 'deep_learning' : 'dsa',
+          payload: {
+            vizId: simulationId,
+            action,
+            metadata
+          }
+        })
+      });
+    } catch (e) {
+      console.warn('Telemetry error:', e);
+    }
+  };
+
   useEffect(() => {
     currentSimId.current = simulationId;
+    track3DTelemetry('visualization_opened', { timestamp: new Date().toISOString() });
   }, [simulationId]);
 
   useEffect(() => {
     learningRateRef.current = lr;
+    track3DTelemetry('learning_rate_changed', { lr });
   }, [lr]);
 
   useEffect(() => {
     isRunningRef.current = isRunning;
+    track3DTelemetry(isRunning ? 'simulation_started' : 'simulation_paused', { lr });
   }, [isRunning]);
 
   // Handle simulations
@@ -197,6 +221,9 @@ export default function ThreeDLearningLab({ simulationId, onInteractionComplete 
       const movePointer = () => {
         currentIdx = (currentIdx + 1) % nodeCount;
         pointer.position.x = startX + currentIdx * 2.2;
+        
+        track3DTelemetry('pointer_step', { index: currentIdx });
+
         if (onInteractionComplete && currentIdx === nodeCount - 1) {
           onInteractionComplete({ stepsCompleted: 5, completed: true });
         }
@@ -509,7 +536,7 @@ export default function ThreeDLearningLab({ simulationId, onInteractionComplete 
       }
       renderer.dispose();
     };
-  }, [simulationId]);
+  }, [simulationId, resetKey]);
 
   // Insert a BST Node triggers
   const handleInsertNode = () => {
@@ -519,6 +546,8 @@ export default function ThreeDLearningLab({ simulationId, onInteractionComplete 
     if (onInteractionComplete) {
       onInteractionComplete({ stepsCompleted: 1, completed: true });
     }
+
+    track3DTelemetry('node_insert', { value: val });
 
     // Set tree value flag and rebuild
     setTreeValue('');
@@ -628,7 +657,7 @@ export default function ThreeDLearningLab({ simulationId, onInteractionComplete 
                 <button
                   onClick={() => {
                     setIsRunning(false);
-                    buildGradientDescentVisual();
+                    setResetKey(prev => prev + 1);
                   }}
                   className="bg-gray-800 hover:bg-gray-700 text-white text-xs px-3 py-1 rounded"
                 >

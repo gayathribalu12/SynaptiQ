@@ -16,6 +16,8 @@ export default function Workspace({ selectedSkillId, onNavigateBack }: Workspace
 
   const [roadmap, setRoadmap] = useState<any>(null);
   const [recommendation, setRecommendation] = useState<any>(null);
+  const [decisionTrace, setDecisionTrace] = useState<any>(null);
+  const [showTrace, setShowTrace] = useState(false);
   const [questions, setQuestions] = useState<any[]>([]);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
@@ -59,8 +61,16 @@ export default function Workspace({ selectedSkillId, onNavigateBack }: Workspace
           deep_learning: 'Deep Learning & Neural Networks'
         };
         recData.skillName = skillNameMap[selectedSkillId] || selectedSkillId;
-        // Determine optimal format based on skill difficulty
-        recData.recommendedFormat = ['dsa', 'deep_learning', 'gradient_descent'].includes(selectedSkillId) ? '3d' : 'text';
+      }
+
+      // Fetch optimal format decision trace dynamically from AI engine
+      try {
+        const traceRes = await fetch(`/api/optimal-format?skillId=${recData.skillId}`);
+        const traceData = await traceRes.json();
+        setDecisionTrace(traceData);
+        recData.recommendedFormat = traceData.format;
+      } catch (e) {
+        console.warn('Trace fetch failed:', e);
       }
       setRecommendation(recData);
 
@@ -250,17 +260,56 @@ export default function Workspace({ selectedSkillId, onNavigateBack }: Workspace
           </div>
         </div>
 
-        {/* Mastery rating */}
-        <div className="flex items-center space-x-3 bg-[#121A2E] px-3 py-1 rounded-lg border border-[#1E2D4A]">
-          <div className="flex flex-col text-right">
-            <span className="text-[9px] font-mono text-gray-400 uppercase">Current Mastery</span>
-            <span className="text-xs font-bold text-white font-mono">{masteryScore}%</span>
-          </div>
-          <div className="w-16 h-2 bg-slate-800 rounded overflow-hidden">
-            <div className="h-full bg-gradient-to-r from-blue-500 to-purple-500" style={{ width: `${masteryScore}%` }}></div>
+        <div className="flex items-center space-x-3">
+          {decisionTrace && (
+            <button
+              onClick={() => setShowTrace(!showTrace)}
+              className={`text-[10px] font-mono font-bold px-3 py-1 rounded transition uppercase ${
+                showTrace ? 'bg-[#8B5CF6] text-white' : 'bg-[#1E2D4A] text-gray-400 hover:text-white'
+              }`}
+            >
+              Toggle AI Trace
+            </button>
+          )}
+
+          {/* Mastery rating */}
+          <div className="flex items-center space-x-3 bg-[#121A2E] px-3 py-1 rounded-lg border border-[#1E2D4A]">
+            <div className="flex flex-col text-right">
+              <span className="text-[9px] font-mono text-gray-400 uppercase">Current Mastery</span>
+              <span className="text-xs font-bold text-white font-mono">{masteryScore}%</span>
+            </div>
+            <div className="w-16 h-2 bg-slate-800 rounded overflow-hidden">
+              <div className="h-full bg-gradient-to-r from-blue-500 to-purple-500" style={{ width: `${masteryScore}%` }}></div>
+            </div>
           </div>
         </div>
       </div>
+
+      {/* AI Decision Trace Overlay */}
+      {showTrace && decisionTrace && (
+        <div className="bg-[#151D30] border border-[#8B5CF6]/40 p-4 rounded-xl mb-3 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 animate-fadeIn shadow-neon-purple text-xs font-mono">
+          <div className="space-y-1">
+            <div className="flex items-center space-x-1.5 text-purple-400">
+              <Sparkles className="w-4 h-4 animate-pulse" />
+              <span>SYNAPTIQ REASONING ENGINE // TELEMETRY_DECISION_TRACE</span>
+            </div>
+            <p className="text-gray-300 font-sans max-w-4xl">
+              <strong>Recommendation Rationale:</strong> {decisionTrace.reason}
+            </p>
+          </div>
+          <div className="flex-shrink-0 bg-[#0A0E1A] p-2 rounded border border-[#1E2D4A] space-y-1">
+            <div>
+              <span className="text-gray-500">Selected Format:</span> <strong className="text-white">{decisionTrace.format.toUpperCase()}</strong>
+            </div>
+            <div>
+              <span className="text-gray-500">Selection Confidence:</span> <strong className="text-purple-400">{Math.round(decisionTrace.confidence * 100)}%</strong>
+            </div>
+            <div>
+              <span className="text-gray-500">Alternatives:</span> <strong className="text-blue-400">{(decisionTrace.alternatives || []).join(', ')}</strong>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main 3-panel workspace content */}
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-4 gap-4 overflow-hidden min-h-0">

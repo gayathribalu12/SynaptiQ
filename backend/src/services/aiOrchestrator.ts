@@ -14,7 +14,6 @@ interface GoalAnalysisResult {
  * Automatically falls back to deterministic rule/dictionary parsing if API keys are missing.
  */
 export async function analyzeGoal(goalText: string): Promise<GoalAnalysisResult> {
-  // Check if LLM API is available (e.g. env variables). Here we implement a high-fidelity dictionary parser.
   const lowercase = goalText.toLowerCase();
   
   let career_goal = 'AI Engineer';
@@ -39,7 +38,6 @@ export async function analyzeGoal(goalText: string): Promise<GoalAnalysisResult>
     timeline = '12 months';
   }
 
-  // Extract skills from text
   const skillList = ['python', 'java', 'c++', 'javascript', 'sql', 'statistics', 'numpy', 'pandas', 'ml', 'html', 'css', 'react'];
   const existing_skills: string[] = [];
   for (const s of skillList) {
@@ -48,10 +46,7 @@ export async function analyzeGoal(goalText: string): Promise<GoalAnalysisResult>
     }
   }
 
-  // Set default target skills for AI Engineer
   const target_skills = ['PYTHON', 'DSA', 'STATISTICS', 'PROBABILITY', 'GRADIENT DESCENT', 'ML', 'DEEP LEARNING', 'NLP', 'LLMS', 'RAG', 'AI AGENTS'];
-  
-  // Calculate missing
   const missing_skills = target_skills.filter(s => !existing_skills.includes(s));
 
   return {
@@ -78,7 +73,6 @@ export async function analyzeResume(resumeText: string): Promise<string[]> {
   const found: string[] = [];
   for (const skill of knownSkills) {
     if (lowercase.includes(skill)) {
-      // Map to proper capitalizations
       found.push(skill === 'ml' ? 'ML' : skill.toUpperCase());
     }
   }
@@ -87,7 +81,45 @@ export async function analyzeResume(resumeText: string): Promise<string[]> {
 }
 
 /**
+ * Grounded RAG Document Chunk retriever.
+ * Performs keyword-matching lexical indexing across chunk tables.
+ */
+export async function retrieveDocumentChunks(userId: string, queryText: string): Promise<string[]> {
+  const userDocs = await prisma.document.findMany({
+    where: { userId },
+    include: { chunks: true }
+  });
+
+  if (userDocs.length === 0) return [];
+
+  const queryTerms = queryText.toLowerCase().split(/\s+/).filter(term => term.length > 3);
+  const matchedChunks: Array<{ content: string; score: number }> = [];
+
+  for (const doc of userDocs) {
+    for (const chunk of doc.chunks) {
+      let score = 0;
+      const chunkText = chunk.content.toLowerCase();
+      
+      for (const term of queryTerms) {
+        if (chunkText.includes(term)) {
+          score += 1;
+        }
+      }
+
+      if (score > 0) {
+        matchedChunks.push({ content: chunk.content, score });
+      }
+    }
+  }
+
+  // Sort by lexical match count
+  matchedChunks.sort((a, b) => b.score - a.score);
+  return matchedChunks.slice(0, 2).map(c => c.content);
+}
+
+/**
  * Contextual Tutor chatbot router.
+ * Injects learner profile, mastery tracking, and retrieved RAG document context.
  */
 export async function tutorChat(
   userId: string,
@@ -96,65 +128,64 @@ export async function tutorChat(
   mode: 'explain' | 'socratic' | 'practice' | 'debug' | 'interview',
   history: { role: string; content: string }[]
 ): Promise<{ text: string; sourceDocs?: string[] }> {
-  // Check live API keys if desired. Here we use high-fidelity Socratic/Tutorial rule engines:
   const lowerMsg = message.toLowerCase();
 
-  // RAG checks: if they ask about document contents, we can fetch document chunks from SQLite
-  let sourceDocs: string[] = [];
-  const hasDocQuery = lowerMsg.includes('pdf') || lowerMsg.includes('document') || lowerMsg.includes('my notes') || lowerMsg.includes('resume');
-  if (hasDocQuery) {
+  // 1. Fetch RAG chunks
+  const ragChunks = await retrieveDocumentChunks(userId, message);
+  const sourceDocs: string[] = [];
+
+  if (ragChunks.length > 0) {
     const doc = await prisma.document.findFirst({ where: { userId } });
-    if (doc) {
-      sourceDocs.push(doc.filename);
-    }
+    if (doc) sourceDocs.push(doc.filename);
   }
+
+  // 2. Fetch user profile & skill mastery for hyper-personalization
+  const profile = await prisma.learnerProfile.findUnique({
+    where: { userId },
+    include: { skills: { where: { skillId: topic } } }
+  });
+
+  const mastery = profile?.skills[0]?.mastery ?? 0.35;
 
   let text = '';
 
   if (mode === 'socratic') {
-    if (lowerMsg.includes('what') || lowerMsg.includes('how') || lowerMsg.includes('why')) {
-      text = `Excellent question! Let's think about this step-by-step. If we are traversing a binary tree, what is the core difference between visiting the left node before the parent node versus visiting the parent node first? What do you think would happen to the order of elements?`;
+    if (mastery < 0.40) {
+      text = `Since you are starting out with ${topic}, let's think: what is the slope of a curve at a single point? If we take a step *against* that slope, do we move up or down?`;
     } else {
-      text = `That is an interesting perspective. How does this fit with what we know about recursion base cases? What stops our function from executing indefinitely in this scenario?`;
+      text = `With your current ${Math.round(mastery * 100)}% mastery in ${topic}, how would you describe the difference between Stochastic Gradient Descent and Batch Gradient Descent concerning optimization speed and convergence paths?`;
     }
-  } else if (mode === 'practice') {
-    text = `Let's practice! Write a short Python function that checks if a binary search tree is valid. Try to include a base case for a null node. Type your code here, and I'll review it for any potential edge-case issues!`;
-  } else if (mode === 'debug') {
-    if (lowerMsg.includes('recursion') || lowerMsg.includes('stack overflow') || lowerMsg.includes('loop')) {
-      text = `I spotted the bug! Your recursive call is missing a base case. In Python, if a node is \`None\`, the function must return immediately (e.g. \`return True\`). Otherwise, it will keep calling itself and throw a \`RecursionError\`. Add this at the very top of your function:
+  } 
+  else if (mode === 'practice') {
+    text = `Here is a practice drill for ${topic}: Write a short Python routine verifying that standard binary search index updates do not trigger off-by-one exceptions when elements are not found. Type your snippet below.`;
+  } 
+  else if (mode === 'debug') {
+    if (lowerMsg.includes('divergence') || lowerMsg.includes('overshoot') || lowerMsg.includes('nan')) {
+      text = `Ah, I see! Your learning rate is too high, causing weight values to explode to NaN. Adjust the step scale down using:
 \`\`\`python
-if node is None:
-    return True
+learning_rate = 0.01  # Lowered from 0.50
 \`\`\``;
     } else {
-      text = `Your logic looks solid, but check if you are handling boundary conditions correctly. Are you comparing values with strict inequalities (\`<\`) or inclusive inequalities (\`<=\`)? Often, off-by-one errors stem from this!`;
+      text = `Double-check your array boundaries. Off-by-one errors typically happen when you use \`high = len(arr)\` instead of \`high = len(arr) - 1\`.`;
     }
-  } else if (mode === 'interview') {
-    text = `[Technical Interviewer]: Welcome! Today we are discussing model evaluation. You've trained a random forest classifier for customer churn. The training accuracy is 99%, but the test accuracy is only 63%. Tell me, what is happening here, and what steps would you take to diagnose and solve this?`;
-  } else {
+  } 
+  else if (mode === 'interview') {
+    text = `[Technical Interviewer]: Welcome! Today we are discussing model evaluation. You've trained a neural net that has 99% accuracy on training data but only 64% on validation runs. Explain this divergence, and how you would apply regularization to resolve it.`;
+  } 
+  else {
     // Explain mode
-    if (topic.includes('binary_tree') || topic.includes('dsa')) {
-      text = `A **Binary Search Tree (BST)** is a node-based binary tree data structure which has the following properties:
-1. The left subtree of a node contains only nodes with keys less than the node's key.
-2. The right subtree of a node contains only nodes with keys greater than the node's key.
-3. Both the left and right subtrees must also be binary search trees.
-
-Interactive 3D simulation is highly recommended for this concept. Click the **3D Lab** button in the center panel to visualize how insertions and traversals work!`;
-    } else if (topic.includes('gradient_descent')) {
-      text = `**Gradient Descent** is an optimization algorithm used to minimize a loss function by iteratively moving in the direction of steepest descent.
-- Think of it as walking down a foggy mountain. You can't see the bottom, but you can feel the slope of the ground beneath your feet. You take a step in the direction that goes downhill.
-- **Learning Rate (\(\alpha\))** defines the size of the steps. If it is too small, you'll take forever to reach the bottom. If it is too large, you might overshoot the valley and end up climbing up the other side!`;
+    if (mastery < 0.40) {
+      // Simpler explanation for beginners
+      text = `Let's keep it simple: **${topic.toUpperCase()}** is about taking small steps down a steep slope until you reach the lowest flat point (the minimum loss). Imagine rolling a ball down a bowl; it naturally settles at the bottom.`;
     } else {
-      text = `Let's break down **${topic.toUpperCase()}**. It is a crucial skill for your AI engineering goals. 
-To build deep mastery:
-1. Understand the theoretical formulation (the 'why').
-2. Explore the visual representation in our 3D lab.
-3. Solve practice quizzes to test boundary conditions and misconceptions.`;
+      // Advanced Socratic details for higher mastery
+      text = `Optimization with **${topic.toUpperCase()}** adjusts parameters $\\theta$ dynamically. The update rule is $\\theta_{t+1} = \\theta_t - \\alpha \\nabla L(\\theta_t)$, where $\\alpha$ is the learning rate step-size. If $\\alpha$ is too large, the updates oscillate across valleys, leading to divergence.`;
     }
   }
 
-  if (sourceDocs.length > 0) {
-    text += `\n\n*(Grounded in uploaded document: ${sourceDocs.join(', ')})*`;
+  // Inject RAG chunks if matching
+  if (ragChunks.length > 0) {
+    text += `\n\n**[Document Grounding Chunk]:**\n*"${ragChunks[0]}"*\n\n*(Extracted from uploaded study notes: ${sourceDocs.join(', ')})*`;
   }
 
   return { text, sourceDocs };
@@ -216,4 +247,46 @@ export async function evaluateInterview(
   }
 
   return { score, feedback, nextQuestion };
+}
+
+/**
+ * Misconception Targeted Interventions Engine.
+ * Triggers short remediation items when specific mistake thresholds are crossed.
+ */
+export async function getMisconceptionIntervention(
+  userId: string,
+  skillId: string
+): Promise<{ explanation: string; example: string; questions: string[] } | null> {
+  const mistakes = await prisma.mistake.findMany({
+    where: { userId, skillId }
+  });
+
+  const overflowMistake = mistakes.find(m => m.errorType === 'learning_rate_overshoot' && m.count >= 2);
+  const boundaryMistake = mistakes.find(m => m.errorType === 'off-by-one' && m.count >= 2);
+
+  if (overflowMistake) {
+    return {
+      explanation: 'You are repeatedly overshooting convergence goals. When the learning rate $\\alpha$ is too high, step increments diverge.',
+      example: 'Example: In Gradient Descent, $\\theta \\leftarrow \\theta - \\alpha \\nabla L$. If $\\alpha = 0.9$ and slope = 2, step jumps past the minimum point to the opposite upward slope.',
+      questions: [
+        'What will happen if you lower $\\alpha$ from 0.80 to 0.05?',
+        'Does the gradient vector point towards increase or decrease?',
+        'State the convergence parameter for Stochastic descent.'
+      ]
+    };
+  }
+
+  if (boundaryMistake) {
+    return {
+      explanation: 'You are consistently triggering off-by-one boundary exceptions during indexing operations.',
+      example: 'Example: In Binary Search, when middle index matches: index ranges are [low, mid - 1] or [mid + 1, high]. Forgetting the -1/+1 offset causes infinite loops.',
+      questions: [
+        'Why does a mid search range exclude the mid element?',
+        'What is the index value of the final element in an array of size N?',
+        'Explain base recursion boundaries for empty tree nodes.'
+      ]
+    };
+  }
+
+  return null;
 }

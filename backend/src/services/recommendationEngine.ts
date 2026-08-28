@@ -208,49 +208,38 @@ export async function recommendNextAction(userId: string): Promise<Recommendatio
   };
 }
 
+import { selectOptimalFormatAI } from './optimalVisualLearning';
+
 /**
  * Implements Contextual Bandit selection (epsilon-greedy).
- * Scores each format = preferenceScore + randomExploration.
+ * Integrates directly with the optimal visual learning service.
  */
 export async function selectOptimalFormat(userId: string, skillId: string): Promise<string> {
-  const preferences = await prisma.learningPreference.findMany({
-    where: { userId }
-  });
+  try {
+    const decision = await selectOptimalFormatAI(userId, skillId);
+    return decision.format;
+  } catch (error) {
+    // Epsilon-greedy exploration baseline fallback
+    const preferences = await prisma.learningPreference.findMany({
+      where: { userId }
+    });
 
-  if (preferences.length === 0) {
-    return 'text'; // base default
-  }
+    if (preferences.length === 0) return 'text';
 
-  const epsilon = 0.15; // 15% exploration rate
-  const shouldExplore = Math.random() < epsilon;
-
-  if (shouldExplore) {
-    const randomIndex = Math.floor(Math.random() * preferences.length);
-    return preferences[randomIndex].format;
-  }
-
-  // Exploitation: Pick format with highest preferenceScore
-  preferences.sort((a, b) => b.preferenceScore - a.preferenceScore);
-  
-  // Section 27: If the system detects a difficult concept and 3D has high score, recommend 3D
-  // If the skill is visual (like binary tree, neural network, or gradient descent), prioritize '3d'
-  const visualSkills = ['dsa', 'deep_learning', 'gradient_descent'];
-  const isVisualSkill = visualSkills.includes(skillId);
-  
-  if (isVisualSkill) {
-    const tdPref = preferences.find(p => p.format === '3d');
-    if (tdPref && tdPref.preferenceScore > 0.60) {
-      return '3d';
+    const epsilon = 0.15;
+    if (Math.random() < epsilon) {
+      const randomIndex = Math.floor(Math.random() * preferences.length);
+      return preferences[randomIndex].format;
     }
-  }
 
-  return preferences[0].format;
+    preferences.sort((a, b) => b.preferenceScore - a.preferenceScore);
+    return preferences[0].format;
+  }
 }
 
 /**
- * Updates the Contextual Bandit rewards after an intervention event.
- * Reward formula: Reward = completion (0.3) + masteryImprovement (0.5) + speedRatio (0.2)
- * preferenceScore = (1 - alpha) * preferenceScore + alpha * Reward
+ * Updates the Contextual Bandit rewards after an intervention event using learning outcome metrics.
+ * Formula: Reward = 0.50 * masteryDelta + 0.30 * assessmentDelta + 0.15 * completion + 0.05 * engagement
  */
 export async function updateContextualBandit(
   userId: string,
@@ -269,20 +258,25 @@ export async function updateContextualBandit(
 
   if (!preference) return;
 
-  const alpha = 0.25; // Learning rate
+  const alpha = 0.25; // learning rate
 
-  const completionReward = successMetrics.completed ? 0.3 : 0.0;
-  
-  const scoreDiff = successMetrics.scoreAfter - successMetrics.scoreBefore;
-  const masteryReward = Math.max(0, Math.min(0.5, scoreDiff * 0.5)); // positive improvement reward
+  // Configure normalized weights
+  const wMastery = 0.50;
+  const wAssessment = 0.30;
+  const wCompletion = 0.15;
+  const wEngagement = 0.05;
 
-  const speedRatio = successMetrics.expectedTimeSec / Math.max(1, successMetrics.timeSpentSec);
-  const timeReward = successMetrics.completed ? Math.min(0.2, speedRatio * 0.2) : 0.0;
+  const masteryDelta = Math.max(0, successMetrics.scoreAfter - successMetrics.scoreBefore);
+  const assessmentDelta = Math.max(0, (successMetrics.scoreAfter - successMetrics.scoreBefore) * 0.8); // mapped proxy
+  const completionVal = successMetrics.completed ? 1.0 : 0.0;
+  const engagementVal = Math.min(1.0, successMetrics.timeSpentSec / Math.max(1, successMetrics.expectedTimeSec));
 
-  const totalReward = completionReward + masteryReward + timeReward;
+  // Compute weighted normalized outcome reward
+  const reward = (wMastery * masteryDelta) + (wAssessment * assessmentDelta) + (wCompletion * completionVal) + (wEngagement * engagementVal);
+  const normalizedReward = Math.max(0.01, Math.min(0.99, reward));
 
-  // New score: (1 - alpha) * old_score + alpha * totalReward
-  const newScore = (1 - alpha) * preference.preferenceScore + alpha * totalReward;
+  // Thompson decay update: preferenceScore = (1 - alpha) * preferenceScore + alpha * reward
+  const newScore = (1 - alpha) * preference.preferenceScore + alpha * normalizedReward;
   const clampedScore = Math.max(0.05, Math.min(0.99, newScore));
 
   await prisma.learningPreference.update({
