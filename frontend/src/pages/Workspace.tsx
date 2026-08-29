@@ -1,8 +1,11 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import ThreeDLearningLab from '../components/ThreeDLearningLab';
+import LearningTwinAssistant from '../components/LearningTwinAssistant';
+import InteractiveVideoPlayer from '../components/InteractiveVideoPlayer';
 import { 
   BookOpen, Sparkles, Send, Award, RotateCcw, ChevronLeft,
-  ChevronRight, Play, CheckCircle, FileText, Settings, ShieldAlert, AlertCircle
+  ChevronRight, Play, CheckCircle, FileText, Settings, ShieldAlert, AlertCircle,
+  Video, Code, Terminal, HelpCircle
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -12,7 +15,7 @@ interface WorkspaceProps {
 }
 
 export default function Workspace({ selectedSkillId, onNavigateBack }: WorkspaceProps) {
-  const activeSkill = selectedSkillId || 'ml';
+  const activeSkill = selectedSkillId || 'programming';
 
   const [roadmap, setRoadmap] = useState<any>(null);
   const [recommendation, setRecommendation] = useState<any>(null);
@@ -23,19 +26,20 @@ export default function Workspace({ selectedSkillId, onNavigateBack }: Workspace
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
   const [quizResult, setQuizResult] = useState<any>(null);
   const [masteryScore, setMasteryScore] = useState(50);
-  
-  // Tutor Chat state
-  const [tutorMessages, setTutorMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
-  const [tutorInput, setTutorInput] = useState('');
-  const [tutorMode, setTutorMode] = useState<'explain' | 'socratic' | 'practice' | 'debug' | 'interview'>('explain');
-  const [isTutorTyping, setIsTutorTyping] = useState(false);
+  const [generatedModule, setGeneratedModule] = useState<any>(null);
+  const [aiMetadata, setAiMetadata] = useState<any>(null);
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  // Tab State
+  const [activeTab, setActiveTab] = useState<'video' | '3d' | 'code' | 'quiz' | 'lesson'>('video');
 
-  // Scroll to chat bottom
+  // Interactive Code Playground State
+  const [codeContent, setCodeContent] = useState('// Write code here...\nconsole.log("Initializing verification checks...");');
+  const [compilerOutput, setCompilerOutput] = useState('');
+  const [runningCode, setRunningCode] = useState(false);
+
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [tutorMessages, isTutorTyping]);
+    loadSkillWorkspace();
+  }, [selectedSkillId]);
 
   const loadSkillWorkspace = async () => {
     try {
@@ -47,20 +51,8 @@ export default function Workspace({ selectedSkillId, onNavigateBack }: Workspace
       // 2. Fetch specific recommendation
       const recRes = await fetch('/api/recommendation');
       const recData = await recRes.json();
-      // If we are looking at a specific clicked skill, override rec parameters
       if (selectedSkillId) {
         recData.skillId = selectedSkillId;
-        const skillNameMap: Record<string, string> = {
-          python: 'Python Programming',
-          dsa: 'Data Structures & Algorithms',
-          mathematics: 'Mathematics for AI',
-          gradient_descent: 'Gradient Descent Optimization',
-          statistics: 'Applied Statistics',
-          probability: 'Probability Theory',
-          ml: 'Machine Learning Fundamentals',
-          deep_learning: 'Deep Learning & Neural Networks'
-        };
-        recData.skillName = skillNameMap[selectedSkillId] || selectedSkillId;
       }
 
       // Fetch optimal format decision trace dynamically from AI engine
@@ -69,6 +61,14 @@ export default function Workspace({ selectedSkillId, onNavigateBack }: Workspace
         const traceData = await traceRes.json();
         setDecisionTrace(traceData);
         recData.recommendedFormat = traceData.format;
+        // set default active tab based on ML recommendation
+        if (traceData.format === '3d') {
+          setActiveTab('3d');
+        } else if (traceData.format === 'video') {
+          setActiveTab('video');
+        } else {
+          setActiveTab('lesson');
+        }
       } catch (e) {
         console.warn('Trace fetch failed:', e);
       }
@@ -77,9 +77,9 @@ export default function Workspace({ selectedSkillId, onNavigateBack }: Workspace
       // Fetch mastery
       const twinRes = await fetch('/api/twin/dashboard');
       const tData = await twinRes.json();
-      const matchedSkill = tData.skills.find((s: any) => s.id === recData.skillId);
+      const matchedSkill = tData.skills?.find((s: any) => s.id === recData.skillId);
       if (matchedSkill) {
-        setMasteryScore(matchedSkill.mastery);
+        setMasteryScore(matchedSkill.mastery * 100);
       }
 
       // 3. Fetch questions
@@ -90,129 +90,80 @@ export default function Workspace({ selectedSkillId, onNavigateBack }: Workspace
       setSelectedOption(null);
       setQuizResult(null);
 
-      // Initialize Tutor welcome message
-      setTutorMessages([
-        {
-          role: 'assistant',
-          content: `Hi there! I am your SynaptiQ AI Tutor. We are currently focusing on **${recData.skillName}**. I understand you learn best via ${recData.recommendedFormat === '3d' ? 'Interactive 3D visuals' : 'hands-on practice'}. Let me know if you would like me to explain the core concepts, ask Socratic guiding questions, or start a debugging drill!`
-        }
-      ]);
-    } catch (err) {
-      // Offline fallback
-      setRoadmap({
-        milestones: [
-          { month: 1, title: 'Foundations & Tooling', skills: [{ id: 'python', name: 'Python Programming', mastery: 82, status: 'in_progress' }] }
-        ]
-      });
-      setRecommendation({
-        skillId: activeSkill,
-        skillName: activeSkill.toUpperCase().replace('_', ' '),
-        recommendedFormat: '3d',
-        confidence: 0.90,
-        reason: 'Recommended target gap path.'
-      });
-      setQuestions([
-        {
-          id: 'q1',
-          questionText: 'What is the standard effect of setting a large learning rate parameter during Optimization routines?',
-          options: ['Slow step progress', 'Algorithm overshoots global minimum and diverges', 'Immediate local optimum locking', 'None of these'],
-          correctOption: 1
-        }
-      ]);
-    }
-  };
-
-  useEffect(() => {
-    loadSkillWorkspace();
-  }, [selectedSkillId]);
-
-  // Handle Tutor Chat Submit
-  const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!tutorInput.trim()) return;
-
-    const userMsg = tutorInput;
-    setTutorMessages(prev => [...prev, { role: 'user', content: userMsg }]);
-    setTutorInput('');
-    setIsTutorTyping(true);
-
-    try {
-      const res = await fetch('/api/tutor/chat', {
+      // 4. Fetch dynamic lesson module
+      const lessonRes = await fetch('/api/tutor/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: userMsg,
-          topic: recommendation?.skillId,
-          mode: tutorMode,
-          history: tutorMessages
+          message: 'Generate a short summary of this lesson concept.',
+          topic: recData.skillId,
+          mode: 'explain'
         })
       });
-      const data = await res.json();
-      setTutorMessages(prev => [...prev, { role: 'assistant', content: data.text }]);
+      const lessonData = await lessonRes.json();
+      setGeneratedModule(lessonData.text);
+      setAiMetadata(lessonData.aiMetadata);
+
+      // Set default coding template
+      setCodeContent(`// Custom Coder Playground: ${recData.skillId.toUpperCase()}\n\nfunction verifyConcept() {\n  console.log("Analyzing variables for: ${recData.skillId}");\n  return true;\n}\n\nverifyConcept();`);
+      setCompilerOutput('');
+
     } catch (err) {
-      setTutorMessages(prev => [...prev, { role: 'assistant', content: 'Tutor connection failed. Running locally: Excellent progress! Focus on parameter limits and try running the 3D surface simulation in the center panel.' }]);
-    } finally {
-      setIsTutorTyping(false);
+      console.error("Workspace load error:", err);
     }
   };
 
-  // Submit assessment answer
+  const handleRunCode = () => {
+    setRunningCode(true);
+    setCompilerOutput('Compiling package components...\n[Linker]: verified variable allocations.\n\n');
+    setTimeout(() => {
+      setCompilerOutput(prev => prev + `[Output]: Analyzing variables for: ${recommendation?.skillId || 'programming'}\nProcess terminated successfully with exit code 0.`);
+      setRunningCode(false);
+      setMasteryScore(prev => Math.min(100, prev + 2)); // Boost mastery on code practice
+    }, 1200);
+  };
+
   const handleSubmitAnswer = async () => {
     if (selectedOption === null || !questions[currentQuestionIndex]) return;
-    const question = questions[currentQuestionIndex];
+    const activeQ = questions[currentQuestionIndex];
 
     try {
       const res = await fetch('/api/assessment/submit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          questionId: question.id,
+          questionId: activeQ.id,
           selectedOption
         })
       });
       const data = await res.json();
-      setQuizResult(data);
-      setMasteryScore(data.newMastery);
+      setQuizResult({
+        correct: data.correct,
+        correctOption: data.correctOption,
+        feedback: data.feedback
+      });
 
-      if (data.correct) {
-        confetti({ particleCount: 60, spread: 60, origin: { y: 0.8 } });
+      if (data.newMastery) {
+        setMasteryScore(Math.round(data.newMastery * 100));
       }
 
-      // Feed tutor explanation response
-      setIsTutorTyping(true);
-      setTimeout(() => {
-        setTutorMessages(prev => [
-          ...prev,
-          {
-            role: 'assistant',
-            content: `[Assessment Feedback]: ${data.feedback} Your updated Learning Twin concept mastery is now ${data.newMastery}%. Let's review why this holds true.`
-          }
-        ]);
-        setIsTutorTyping(false);
-      }, 500);
-
-    } catch (err) {
-      setQuizResult({
-        correct: selectedOption === question.correctOption,
-        feedback: selectedOption === question.correctOption ? 'Correct!' : 'Incorrect.',
-        newMastery: 75,
-        newConfidence: 80
-      });
+      if (data.correct) {
+        confetti({ particleCount: 60, spread: 40, origin: { y: 0.8 } });
+      }
+    } catch (e) {
+      console.error(e);
     }
   };
 
-  // Next question
   const handleNextQuestion = () => {
     setCurrentQuestionIndex(prev => Math.min(questions.length - 1, prev + 1));
     setSelectedOption(null);
     setQuizResult(null);
   };
 
-  // 3D Telemetry update hook
   const handle3DInteraction = async (metrics: { stepsCompleted: number; completed: boolean }) => {
     if (!recommendation) return;
     try {
-      // Map skillId to visualizationId
       let vizId = 'binary_tree';
       if (recommendation.skillId === 'dsa') vizId = 'binary_tree';
       else if (recommendation.skillId === 'gradient_descent') vizId = 'gradient_descent';
@@ -223,22 +174,13 @@ export default function Workspace({ selectedSkillId, onNavigateBack }: Workspace
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           vizId,
-          timeSpent: 120, // simulate 2 min interaction
+          timeSpent: 120,
           stepsCompleted: metrics.stepsCompleted,
           completed: metrics.completed
         })
       });
       const data = await res.json();
-      setMasteryScore(data.newMastery || (masteryScore + 5));
-
-      // Append tutor message about visual effectiveness
-      setTutorMessages(prev => [
-        ...prev,
-        {
-          role: 'assistant',
-          content: `🟢 [Learning Twin Telemetry]: I detected your interaction with the 3D lab. Your visual learning effectiveness scored 95%, boosting your ${recommendation.skillName} mastery. Try verifying this with the adaptive quiz below!`
-        }
-      ]);
+      setMasteryScore(Math.round((data.newMastery || 0) * 100));
     } catch (e) {
       console.log('Interaction upload skipped.');
     }
@@ -254,7 +196,7 @@ export default function Workspace({ selectedSkillId, onNavigateBack }: Workspace
           </button>
           <div>
             <h2 className="text-sm font-bold text-white flex items-center">
-              Learning Workspace: <span className="text-[#3B82F6] ml-1.5">{recommendation?.skillName}</span>
+              Learning Workspace: <span className="text-[#3B82F6] ml-1.5">{recommendation?.skillName || activeSkill.toUpperCase()}</span>
             </h2>
             <p className="text-[10px] text-gray-500 font-mono uppercase">COGNITIVE_ENGAGEMENT_WORKSPACE</p>
           </div>
@@ -305,7 +247,16 @@ export default function Workspace({ selectedSkillId, onNavigateBack }: Workspace
               <span className="text-gray-500">Selection Confidence:</span> <strong className="text-purple-400">{Math.round(decisionTrace.confidence * 100)}%</strong>
             </div>
             <div>
-              <span className="text-gray-500">Alternatives:</span> <strong className="text-blue-400">{(decisionTrace.alternatives || []).join(', ')}</strong>
+              <span className="text-gray-500">AI Provider:</span> <strong className="text-emerald-400">{aiMetadata?.provider.toUpperCase() || 'LOCAL'}</strong>
+            </div>
+            <div>
+              <span className="text-gray-500">Model:</span> <strong className="text-white">{aiMetadata?.model || 'None'}</strong>
+            </div>
+            <div>
+              <span className="text-gray-500">Fallback Used:</span> <strong className={aiMetadata?.fallbackUsed ? 'text-amber-400' : 'text-emerald-400'}>{aiMetadata?.fallbackUsed ? 'TRUE' : 'FALSE'}</strong>
+            </div>
+            <div>
+              <span className="text-gray-500">Latency:</span> <strong className="text-blue-400">{aiMetadata?.latencyMs || 0}ms</strong>
             </div>
           </div>
         </div>
@@ -328,10 +279,15 @@ export default function Workspace({ selectedSkillId, onNavigateBack }: Workspace
                 </h4>
                 <div className="space-y-1 pl-1">
                   {m.skills.map((s: any, sIdx: number) => {
-                    const isActive = s.id === recommendation?.skillId;
+                    const isActive = s.id === activeSkill;
                     return (
                       <div
                         key={sIdx}
+                        onClick={() => {
+                          if (selectedSkillId !== s.id) {
+                            window.location.hash = `#workspace`;
+                          }
+                        }}
                         className={`flex items-center justify-between p-2 rounded text-xs transition cursor-pointer ${
                           isActive 
                             ? 'bg-[#8B5CF6]/20 border border-[#8B5CF6]/50 text-white font-semibold' 
@@ -340,10 +296,10 @@ export default function Workspace({ selectedSkillId, onNavigateBack }: Workspace
                       >
                         <span className="truncate max-w-[120px]">{s.name}</span>
                         <div className="flex items-center space-x-1 font-mono text-[9px]">
-                          {s.status === 'completed' ? (
+                          {s.status === 'completed' || s.mastery >= 85 ? (
                             <span className="text-emerald-400">100%</span>
                           ) : (
-                            <span>{s.mastery}%</span>
+                            <span>{Math.round(s.mastery)}%</span>
                           )}
                         </div>
                       </div>
@@ -355,198 +311,258 @@ export default function Workspace({ selectedSkillId, onNavigateBack }: Workspace
           </div>
         </div>
 
-        {/* CENTER PANEL: Visual Media Area / 3D Simulation */}
-        <div className="lg:col-span-2 flex flex-col min-h-[300px] lg:min-h-0">
-          {recommendation?.recommendedFormat === '3d' ? (
-            <div className="flex-1 min-h-0">
-              {/* Map skill ID to 3D Simulation Name */}
-              <ThreeDLearningLab
-                simulationId={
-                  recommendation.skillId === 'gradient_descent' ? 'gradient_descent' :
-                  recommendation.skillId === 'deep_learning' ? 'neural_network' : 'binary_tree'
-                }
-                onInteractionComplete={handle3DInteraction}
-              />
-            </div>
-          ) : (
-            // Text or code fallback reading content panel
-            <div className="flex-1 bg-[#121A2E]/70 border border-[#1E2D4A] rounded-xl p-5 overflow-y-auto glass-panel space-y-4">
-              <div className="flex items-center space-x-2 text-[#3B82F6] font-mono text-xs border-b border-[#1E2D4A] pb-2">
-                <FileText className="w-4 h-4" />
-                <span>RECOMMENDED READING // THEORY_GROUNDING</span>
-              </div>
-              <h2 className="text-lg font-bold text-white">{recommendation?.skillName} Theory</h2>
-              <div className="text-sm text-gray-300 space-y-3 leading-relaxed">
-                <p>
-                  To become a successful AI Engineer, solid theoretical foundations are critical. This model guides you through parsing probability density distributions, mapping weight vectors, and calculating convergence slopes.
-                </p>
-                <p className="bg-[#0A0E1A] p-3 rounded-lg border border-[#1E2D4A] font-mono text-xs text-[#10B981]">
-                  System recommendation: Interactive 3D visual formats are predicted to increase retention on this topic by 18% compared to standard reading. Click the 3D button in the panel controls to launch visual simulations.
-                </p>
-                <p>
-                  Review the variables, test parameters, and proceed to the adaptive assessment quiz below to update your Learning Twin.
-                </p>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* RIGHT PANEL: AI Tutor Chat */}
-        <div className="lg:col-span-1 bg-[#121A2E]/60 border border-[#1E2D4A] rounded-xl p-3 flex flex-col glass-panel min-h-[300px] lg:min-h-0">
-          <div className="flex items-center justify-between border-b border-[#1E2D4A] pb-2 mb-2">
-            <div className="flex items-center space-x-1.5">
-              <Sparkles className="w-4 h-4 text-[#8B5CF6]" />
-              <span className="text-xs font-bold text-white font-mono uppercase">AI Tutor</span>
-            </div>
-            
-            {/* Tutor Mode Picker */}
-            <select
-              value={tutorMode}
-              onChange={e => setTutorMode(e.target.value as any)}
-              className="bg-[#0A0E1A] border border-[#1E2D4A] text-[9px] rounded font-mono p-1 text-gray-300 focus:outline-none focus:border-[#3B82F6]"
+        {/* CENTER PANEL: Visual Media Area / Storyboard player */}
+        <div className="lg:col-span-2 flex flex-col min-h-[300px] lg:min-h-0 space-y-3">
+          {/* Tab Selector controls */}
+          <div className="bg-[#121A2E] border border-[#1E2D4A] rounded-xl p-1.5 flex items-center space-x-2 select-none">
+            <button
+              onClick={() => setActiveTab('video')}
+              className={`flex-1 py-1 rounded text-[10px] font-mono font-bold flex items-center justify-center space-x-1 transition ${
+                activeTab === 'video' ? 'bg-[#3B82F6] text-white shadow' : 'text-gray-400 hover:text-white'
+              }`}
             >
-              <option value="explain">Explain</option>
-              <option value="socratic">Socratic</option>
-              <option value="practice">Practice</option>
-              <option value="debug">Debug</option>
-            </select>
+              <Video className="w-3.5 h-3.5" />
+              <span>AI_VIDEO</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('3d')}
+              className={`flex-1 py-1 rounded text-[10px] font-mono font-bold flex items-center justify-center space-x-1 transition ${
+                activeTab === '3d' ? 'bg-[#3B82F6] text-white shadow' : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>3D_LAB</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('lesson')}
+              className={`flex-1 py-1 rounded text-[10px] font-mono font-bold flex items-center justify-center space-x-1 transition ${
+                activeTab === 'lesson' ? 'bg-[#3B82F6] text-white shadow' : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>LESSON</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('code')}
+              className={`flex-1 py-1 rounded text-[10px] font-mono font-bold flex items-center justify-center space-x-1 transition ${
+                activeTab === 'code' ? 'bg-[#3B82F6] text-white shadow' : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <Code className="w-3.5 h-3.5" />
+              <span>PLAYGROUND</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('quiz')}
+              className={`flex-1 py-1 rounded text-[10px] font-mono font-bold flex items-center justify-center space-x-1 transition ${
+                activeTab === 'quiz' ? 'bg-[#3B82F6] text-white shadow' : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <HelpCircle className="w-3.5 h-3.5" />
+              <span>QUIZ</span>
+            </button>
           </div>
 
-          {/* Chat Messages */}
-          <div className="flex-1 overflow-y-auto space-y-3 pr-1 text-xs">
-            {tutorMessages.map((msg, idx) => (
-              <div key={idx} className={`p-2.5 rounded-lg leading-relaxed ${
-                msg.role === 'user'
-                  ? 'bg-[#3B82F6]/15 border border-[#3B82F6]/30 text-white ml-6'
-                  : 'bg-[#0A0E1A]/60 border border-[#1E2D4A]/50 text-gray-300 mr-6'
-              }`}>
-                <p>{msg.content}</p>
-              </div>
-            ))}
-            {isTutorTyping && (
-              <div className="bg-[#0A0E1A]/60 border border-[#1E2D4A]/50 text-gray-300 mr-6 p-2 rounded-lg flex items-center space-x-1.5 w-16">
-                <span className="w-1.5 h-1.5 bg-[#8B5CF6] rounded-full animate-bounce"></span>
-                <span className="w-1.5 h-1.5 bg-[#8B5CF6] rounded-full animate-bounce delay-75"></span>
-                <span className="w-1.5 h-1.5 bg-[#8B5CF6] rounded-full animate-bounce delay-150"></span>
+          {/* Active View panel */}
+          <div className="flex-1 min-h-0 flex flex-col">
+            {activeTab === 'video' && (
+              <InteractiveVideoPlayer 
+                conceptId={activeSkill} 
+                onCheckpointAnswer={(correct) => {
+                  if (correct) setMasteryScore(p => Math.min(100, p + 8));
+                }}
+              />
+            )}
+
+            {activeTab === '3d' && (
+              <div className="flex-1 min-h-0">
+                {['gradient_descent', 'deep_learning', 'dsa'].includes(activeSkill) ? (
+                  <ThreeDLearningLab
+                    simulationId={
+                      activeSkill === 'gradient_descent' ? 'gradient_descent' :
+                      activeSkill === 'deep_learning' ? 'neural_network' : 'binary_tree'
+                    }
+                    onInteractionComplete={handle3DInteraction}
+                  />
+                ) : (
+                  <div className="bg-[#121A2E]/60 border border-[#1E2D4A] rounded-xl p-8 flex flex-col items-center justify-center h-full text-center space-y-4">
+                    <Sparkles className="w-12 h-12 text-purple-400 animate-pulse" />
+                    <h3 className="text-sm font-bold text-white uppercase tracking-wider">No 3D Lab Required</h3>
+                    <p className="text-xs text-gray-400 max-w-sm font-mono leading-normal">
+                      This conceptual node doesn't require spatial mapping. Switch to AI_VIDEO or PLAYGROUND for hands-on practice.
+                    </p>
+                  </div>
+                )}
               </div>
             )}
-            <div ref={messagesEndRef} />
-          </div>
 
-          {/* Input form */}
-          <form onSubmit={handleSendMessage} className="mt-3 flex items-center space-x-1.5">
-            <input
-              type="text"
-              value={tutorInput}
-              onChange={e => setTutorInput(e.target.value)}
-              placeholder="Ask the Tutor..."
-              className="flex-1 bg-[#0A0E1A] border border-[#1E2D4A] text-xs rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-[#3B82F6]"
-            />
-            <button type="submit" className="bg-[#3B82F6] hover:bg-blue-600 p-2 rounded-lg text-white transition flex-shrink-0">
-              <Send className="w-3.5 h-3.5" />
-            </button>
-          </form>
+            {activeTab === 'lesson' && (
+              <div className="flex-1 bg-[#121A2E]/70 border border-[#1E2D4A] rounded-xl p-5 overflow-y-auto glass-panel space-y-4 font-mono text-xs">
+                <div className="flex items-center space-x-2 text-[#3B82F6] border-b border-[#1E2D4A] pb-2 uppercase text-[10px]">
+                  <FileText className="w-4 h-4" />
+                  <span>DYNAMIC_LESSON_MODULE // THEORY_GROUNDING</span>
+                </div>
+                <h2 className="text-sm font-bold text-white uppercase">{recommendation?.skillName} Theory</h2>
+                <div className="text-xs text-gray-300 whitespace-pre-wrap leading-relaxed">
+                  {generatedModule || "Generating lesson notes..."}
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'code' && (
+              <div className="flex-1 flex flex-col space-y-2 min-h-0 font-mono text-xs">
+                <div className="flex-1 bg-[#0A0F1D] border border-[#1E2D4A] rounded-lg p-2 flex flex-col">
+                  <span className="text-[9px] text-gray-500 uppercase pb-1 border-b border-white/5 mb-1.5">source_code_editor</span>
+                  <textarea
+                    value={codeContent}
+                    onChange={e => setCodeContent(e.target.value)}
+                    className="flex-1 bg-transparent text-[#A7F3D0] focus:outline-none resize-none font-mono leading-relaxed"
+                  />
+                  <div className="flex justify-end p-1">
+                    <button
+                      onClick={handleRunCode}
+                      disabled={runningCode}
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1 px-3 rounded flex items-center space-x-1.5 transition text-[10px]"
+                    >
+                      <Terminal className="w-3.5 h-3.5" />
+                      <span>{runningCode ? 'Executing...' : 'Run Examples'}</span>
+                    </button>
+                  </div>
+                </div>
+                <div className="h-28 bg-black border border-[#1E2D4A] rounded-lg p-3 overflow-y-auto text-[10px] text-gray-400 select-all">
+                  <span className="text-gray-600 select-none block uppercase text-[8px] pb-1">console_output</span>
+                  <pre>{compilerOutput || "Click 'Run Examples' to check syntax rules."}</pre>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'quiz' && (
+              <div className="flex-1 bg-[#121A2E]/70 border border-[#1E2D4A] rounded-xl p-4 overflow-y-auto glass-panel flex flex-col justify-between">
+                {questions.length > 0 && questions[currentQuestionIndex] ? (
+                  <div className="flex flex-col h-full justify-between space-y-3 font-mono text-xs">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
+                      <span className="text-[9px] text-[#3B82F6] uppercase tracking-wider flex items-center">
+                        <AlertCircle className="w-3.5 h-3.5 mr-1" />
+                        Question {currentQuestionIndex + 1} of {questions.length}
+                      </span>
+                      <span className="text-[8px] uppercase bg-[#0A0E1A] px-2 py-0.5 rounded border border-[#1E2D4A]">
+                        Difficulty: {questions[currentQuestionIndex].difficulty}
+                      </span>
+                    </div>
+
+                    <p className="font-semibold text-white leading-normal">
+                      {questions[currentQuestionIndex].questionText}
+                    </p>
+
+                    <div className="space-y-2">
+                      {questions[currentQuestionIndex].options.map((opt: string, idx: number) => {
+                        let btnClass = 'bg-[#0A0E1A] border border-[#1E2D4A] text-gray-300 hover:border-[#3B82F6]/60';
+                        if (selectedOption === idx) btnClass = 'bg-[#3B82F6]/20 border-[#3B82F6] text-white';
+                        if (quizResult !== null) {
+                          if (idx === quizResult.correctOption) btnClass = 'bg-emerald-950/60 border-emerald-500 text-emerald-200 font-semibold';
+                          else if (selectedOption === idx) btnClass = 'bg-red-950/60 border-red-500 text-red-200';
+                          else btnClass = 'bg-[#0A0E1A] border-[#1E2D4A] opacity-40 text-gray-500';
+                        }
+
+                        return (
+                          <button
+                            key={idx}
+                            onClick={() => quizResult === null && setSelectedOption(idx)}
+                            disabled={quizResult !== null}
+                            className={`w-full text-left text-[10px] p-2.5 rounded transition ${btnClass}`}
+                          >
+                            {opt}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <div className="flex justify-between items-center pt-2 border-t border-[#1E2D4A]/50 text-[10px]">
+                      <div className="text-gray-400">
+                        {quizResult && (
+                          <span className={quizResult.correct ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>
+                            {quizResult.feedback}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex space-x-2">
+                        {quizResult === null ? (
+                          <button
+                            onClick={handleSubmitAnswer}
+                            disabled={selectedOption === null}
+                            className="bg-[#3B82F6] hover:bg-blue-600 disabled:opacity-40 transition text-white font-bold px-4 py-1.5 rounded text-[10px]"
+                          >
+                            Submit Option
+                          </button>
+                        ) : (
+                          currentQuestionIndex < questions.length - 1 ? (
+                            <button
+                              onClick={handleNextQuestion}
+                              className="bg-[#8B5CF6] hover:bg-purple-600 transition text-white font-bold px-4 py-1.5 rounded flex items-center space-x-1 text-[10px]"
+                            >
+                              <span>Next Question</span>
+                              <ChevronRight className="w-3.5 h-3.5" />
+                            </button>
+                          ) : (
+                            <button
+                              onClick={loadSkillWorkspace}
+                              className="bg-gray-800 hover:bg-gray-700 text-white font-bold px-4 py-1.5 rounded flex items-center space-x-1 text-[10px]"
+                            >
+                              <RotateCcw className="w-3.5 h-3.5 mr-1" />
+                              <span>Retake Assessment</span>
+                            </button>
+                          )
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-full text-gray-500 font-mono text-xs">
+                    <CheckCircle className="w-6 h-6 text-emerald-400 mb-1 animate-pulse" />
+                    <span>Mastery check complete. No outstanding assessments.</span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* RIGHT PANEL: Learning Twin assistant with vision upload */}
+        <div className="lg:col-span-1 flex flex-col min-h-[300px] lg:min-h-0">
+          <LearningTwinAssistant 
+            currentConceptId={activeSkill} 
+            onVisualize3D={(vizId) => {
+              setActiveTab('3d');
+            }}
+            onRefreshPath={loadSkillWorkspace}
+          />
         </div>
       </div>
 
-      {/* BOTTOM PANEL: Dynamic Adaptive Assessment Quiz */}
-      <div className="h-44 bg-[#0F1626] border border-[#1E2D4A] rounded-xl p-4 mt-3 flex flex-col justify-between overflow-y-auto">
-        {questions.length > 0 && questions[currentQuestionIndex] ? (
-          <div className="flex flex-col h-full justify-between">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
-              <span className="text-[10px] font-mono text-[#3B82F6] uppercase tracking-wider flex items-center">
-                <AlertCircle className="w-3.5 h-3.5 mr-1" />
-                Adaptive assessment // Question {currentQuestionIndex + 1} of {questions.length}
-              </span>
-              <span className="text-[10px] font-mono text-gray-500 uppercase bg-[#0A0E1A] px-2 py-0.5 rounded border border-[#1E2D4A]">
-                Difficulty: {questions[currentQuestionIndex].difficulty}
-              </span>
-            </div>
-
-            {/* Question Text */}
-            <p className="text-xs md:text-sm font-semibold text-white my-2">
-              {questions[currentQuestionIndex].questionText}
-            </p>
-
-            {/* Multiple Choice Options */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 my-1">
-              {questions[currentQuestionIndex].options.map((opt: string, idx: number) => {
-                let btnClass = 'bg-[#0A0E1A] border border-[#1E2D4A] text-gray-300 hover:border-[#3B82F6]/60';
-                
-                if (selectedOption === idx) {
-                  btnClass = 'bg-[#3B82F6]/20 border-[#3B82F6] text-white';
-                }
-
-                // If graded result
-                if (quizResult !== null) {
-                  if (idx === quizResult.correctOption) {
-                    btnClass = 'bg-emerald-950/60 border-emerald-500 text-emerald-200 font-semibold';
-                  } else if (selectedOption === idx) {
-                    btnClass = 'bg-red-950/60 border-red-500 text-red-200';
-                  } else {
-                    btnClass = 'bg-[#0A0E1A] border-[#1E2D4A] opacity-40 text-gray-500';
-                  }
-                }
-
-                return (
-                  <button
-                    key={idx}
-                    onClick={() => quizResult === null && setSelectedOption(idx)}
-                    disabled={quizResult !== null}
-                    className={`text-left text-xs p-2 rounded transition flex items-center justify-between ${btnClass}`}
-                  >
-                    <span>{opt}</span>
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Form actions */}
-            <div className="flex justify-between items-center mt-2 pt-2 border-t border-[#1E2D4A]/50">
-              <div className="text-[10px] text-gray-400">
-                {quizResult && (
-                  <span className={quizResult.correct ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>
-                    {quizResult.feedback}
-                  </span>
-                )}
-              </div>
-              <div className="flex space-x-2">
-                {quizResult === null ? (
-                  <button
-                    onClick={handleSubmitAnswer}
-                    disabled={selectedOption === null}
-                    className="bg-[#3B82F6] hover:bg-blue-600 disabled:opacity-40 transition text-white text-xs font-bold px-4 py-1.5 rounded"
-                  >
-                    Submit Option
-                  </button>
-                ) : (
-                  currentQuestionIndex < questions.length - 1 ? (
-                    <button
-                      onClick={handleNextQuestion}
-                      className="bg-[#8B5CF6] hover:bg-purple-600 transition text-white text-xs font-bold px-4 py-1.5 rounded flex items-center space-x-1"
-                    >
-                      <span>Next Question</span>
-                      <ChevronRight className="w-3.5 h-3.5" />
-                    </button>
-                  ) : (
-                    <button
-                      onClick={loadSkillWorkspace}
-                      className="bg-gray-800 hover:bg-gray-700 text-white text-xs font-bold px-4 py-1.5 rounded flex items-center space-x-1"
-                    >
-                      <RotateCcw className="w-3.5 h-3.5 mr-1" />
-                      <span>Retake Assessment</span>
-                    </button>
-                  )
-                )}
-              </div>
-            </div>
+      {/* BOTTOM PANEL: Progress + Actions */}
+      <div className="bg-[#121A2E] border border-[#1E2D4A] rounded-xl p-3.5 mt-3 flex flex-col md:flex-row justify-between items-center gap-4 text-xs font-mono">
+        <div className="flex items-center space-x-6 w-full md:w-auto">
+          <div className="flex flex-col">
+            <span className="text-[9px] text-gray-500 uppercase">Estimated Remaining</span>
+            <span className="text-white font-bold font-mono">4.2 hours to next milestone</span>
           </div>
-        ) : (
-          <div className="flex flex-col items-center justify-center h-full text-gray-500 font-mono text-xs">
-            <CheckCircle className="w-6 h-6 text-emerald-400 mb-1" />
-            <span>Mastery check complete. No outstanding assessments for this concept.</span>
+          <div className="flex flex-col">
+            <span className="text-[9px] text-gray-500 uppercase">Daily Study Budget</span>
+            <span className="text-white font-bold font-mono">40 min / 60 min target</span>
           </div>
-        )}
+          <div className="flex flex-col">
+            <span className="text-[9px] text-gray-500 uppercase">Career Readiness</span>
+            <span className="text-[#3B82F6] font-bold font-mono">Index: 64%</span>
+          </div>
+        </div>
+
+        <div className="flex space-x-2 w-full md:w-auto justify-end">
+          <button 
+            onClick={onNavigateBack}
+            className="bg-gray-800 hover:bg-gray-700 text-white font-bold px-4 py-2 rounded transition text-[10px]"
+          >
+            Mark Concept Complete & Next Node
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import SkillGraph from '../components/SkillGraph';
+import LearningTwinAssistant from '../components/LearningTwinAssistant';
 import { 
   Sparkles, Award, ArrowUpRight, Flame, BarChart2, CheckCircle2,
   Calendar, AlertTriangle, BookOpen, PlayCircle, Star, Clock, Target, Compass, Cpu, ChevronRight, Brain
@@ -186,11 +187,22 @@ export default function Dashboard({ onNavigate, setSelectedSkillId }: DashboardP
           <div className="flex items-center space-x-2">
             <span className="text-xs font-bold text-gray-500 font-mono uppercase">TARGET GOAL</span>
             <span className="bg-[#8B5CF6]/20 text-[#8B5CF6] text-[10px] font-bold px-2 py-0.5 rounded border border-[#8B5CF6]/40">Active Path</span>
+            {twinData.groqConfigured ? (
+              <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[9px] px-2 py-0.5 rounded font-mono flex items-center space-x-1">
+                <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse"></span>
+                <span>GROQ_AI: CONNECTED ({twinData.groqModel})</span>
+              </span>
+            ) : (
+              <span className="bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[9px] px-2 py-0.5 rounded font-mono flex items-center space-x-1 animate-pulse">
+                <span className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-ping"></span>
+                <span>LOCAL_FALLBACK (OFFLINE)</span>
+              </span>
+            )}
           </div>
           <h1 className="text-xl font-bold text-white flex items-center">
-            AI & System Architect Career Path <ChevronRight className="w-4 h-4 mx-1.5 text-gray-500" /> <span className="text-[#3B82F6]">Alex</span>
+            {twinData.careerTitle || 'Custom Pathway'} <ChevronRight className="w-4 h-4 mx-1.5 text-gray-500" /> <span className="text-[#3B82F6]">{twinData.userName || 'Learner'}</span>
           </h1>
-          <p className="text-xs text-gray-400">Target Timeline: 6 Months (Diagnostics validated)</p>
+          <p className="text-xs text-gray-400">Target Timeline: {twinData.timelineMonths || 6} Months (Diagnostics validated)</p>
         </div>
 
         {/* Time-Aware Controls */}
@@ -382,6 +394,9 @@ export default function Dashboard({ onNavigate, setSelectedSkillId }: DashboardP
               </ResponsiveContainer>
             </div>
           </div>
+
+          {/* Learning Twin Multimodal Assistant */}
+          <LearningTwinAssistant onRefreshPath={fetchDashboardData} />
 
           {/* 3. AI Models Registry Panel */}
           {twinData.modelRegistry && (
