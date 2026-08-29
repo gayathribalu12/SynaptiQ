@@ -1,12 +1,12 @@
-import React, { useState } from 'react';
-import { Sparkles, Brain, Check, FileText, Send, Loader2 } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Sparkles, Brain, Check, FileText, Send, Loader2, Award, ArrowRight } from 'lucide-react';
 
 interface OnboardingProps {
   onOnboardingComplete: () => void;
 }
 
 export default function Onboarding({ onOnboardingComplete }: OnboardingProps) {
-  const [step, setStep] = useState(1); // 1: form, 2: processing extraction, 3: loading twin creation
+  const [step, setStep] = useState(1); // 1: form, 2: processing extraction, 3: verify data, 4: twin creation, 5: adaptive diagnostic quiz
   const [formData, setFormData] = useState({
     name: 'Alex',
     educationLevel: 'undergraduate',
@@ -19,6 +19,12 @@ export default function Onboarding({ onOnboardingComplete }: OnboardingProps) {
 
   const [extractedData, setExtractedData] = useState<any>(null);
   const [loadingTextIndex, setLoadingTextIndex] = useState(0);
+
+  // Diagnostic states
+  const [diagQuestion, setDiagQuestion] = useState<any>(null);
+  const [selectedOptionIdx, setSelectedOptionIdx] = useState<number | null>(null);
+  const [diagCount, setDiagCount] = useState(1);
+  const [diagLoading, setDiagLoading] = useState(false);
 
   const loadingPhrases = [
     'Understanding your goal...',
@@ -47,7 +53,6 @@ export default function Onboarding({ onOnboardingComplete }: OnboardingProps) {
     e.preventDefault();
     setStep(2);
 
-    // Animate NLP text extraction phrases
     for (let i = 0; i < loadingPhrases.length; i++) {
       setLoadingTextIndex(i);
       await new Promise(resolve => setTimeout(resolve, 800));
@@ -62,7 +67,6 @@ export default function Onboarding({ onOnboardingComplete }: OnboardingProps) {
       const data = await res.json();
       setExtractedData(data);
     } catch (err) {
-      // Fallback in case of server offline
       setExtractedData({
         career_goal: 'AI Engineer',
         target: 'Internship',
@@ -73,17 +77,104 @@ export default function Onboarding({ onOnboardingComplete }: OnboardingProps) {
       });
     }
 
-    setStep(3); // Go to Twin creation
+    setStep(3);
   };
 
   const handleBuildTwin = async () => {
-    setStep(4); // Building Twin phrases loop
+    setStep(4);
+    
+    try {
+      await fetch('/api/onboard/initialize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: formData.name,
+          educationLevel: formData.educationLevel,
+          branchField: formData.branchField,
+          experienceLevel: formData.experienceLevel,
+          goal: formData.goal,
+          timeline: Number(formData.timeline),
+          dailyAvailability: Number(formData.dailyAvailability)
+        })
+      });
+    } catch (e) {
+      console.error("Dynamic path mapping failed:", e);
+    }
+
     for (let i = 0; i < twinBuildingPhrases.length; i++) {
       setLoadingTextIndex(i);
       await new Promise(resolve => setTimeout(resolve, 600));
     }
-    onOnboardingComplete();
+    
+    // Fetch first diagnostic question
+    fetchNextDiagnostic();
   };
+
+  const fetchNextDiagnostic = async () => {
+    try {
+      setDiagLoading(true);
+      const res = await fetch('/api/assessment/diagnostic-next?skillId=sql');
+      const question = await res.json();
+      setDiagQuestion(question);
+      setSelectedOptionIdx(null);
+      setStep(5); // Go to diagnostic assessment page
+    } catch (err) {
+      // Fallback
+      setDiagQuestion({
+        id: 'q1_sql',
+        questionText: 'Which SQL operator is used to perform pattern matching on string values?',
+        options: JSON.stringify(['IN', 'LIKE', 'BETWEEN', 'EXISTS']),
+        correctOption: 1
+      });
+      setSelectedOptionIdx(null);
+      setStep(5);
+    } finally {
+      setDiagLoading(false);
+    }
+  };
+
+  const handleDiagnosticSubmit = async () => {
+    if (selectedOptionIdx === null || !diagQuestion) return;
+
+    const correct = selectedOptionIdx === diagQuestion.correctOption;
+
+    try {
+      setDiagLoading(true);
+      // Post event to update BKT/IRT calibration
+      await fetch('/api/learning-event', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          eventType: 'question_answered',
+          skillId: diagQuestion.skillId || 'sql',
+          payload: {
+            questionId: diagQuestion.id,
+            correct,
+            selectedOption: selectedOptionIdx
+          }
+        })
+      });
+
+      if (diagCount >= 5) {
+        // Diagnostic completed!
+        onOnboardingComplete();
+      } else {
+        setDiagCount(prev => prev + 1);
+        fetchNextDiagnostic();
+      }
+    } catch (e) {
+      if (diagCount >= 5) {
+        onOnboardingComplete();
+      } else {
+        setDiagCount(prev => prev + 1);
+        fetchNextDiagnostic();
+      }
+    } finally {
+      setDiagLoading(false);
+    }
+  };
+
+  const optionsList = diagQuestion ? JSON.parse(diagQuestion.options || '[]') : [];
 
   return (
     <div className="max-w-2xl w-full mx-auto px-4 py-8">
@@ -195,7 +286,6 @@ export default function Onboarding({ onOnboardingComplete }: OnboardingProps) {
             </div>
           </div>
 
-          {/* Resume Upload Box mockup */}
           <div className="border-2 border-dashed border-[#1E2D4A] rounded-lg p-5 flex flex-col items-center justify-center bg-[#0A0E1A]/40 cursor-pointer hover:border-[#3B82F6]/60 transition">
             <FileText className="w-8 h-8 text-gray-400 mb-2" />
             <span className="text-xs text-white font-semibold">Upload your Resume or Certificates</span>
@@ -237,7 +327,7 @@ export default function Onboarding({ onOnboardingComplete }: OnboardingProps) {
         </div>
       )}
 
-      {/* STEP 3: Edit Extracted Skills */}
+      {/* STEP 3: Verify Data */}
       {step === 3 && extractedData && (
         <div className="bg-[#121A2E] border border-[#1E2D4A] rounded-2xl p-6 shadow-lg space-y-6">
           <div className="pb-3 border-b border-[#1E2D4A]">
@@ -288,7 +378,7 @@ export default function Onboarding({ onOnboardingComplete }: OnboardingProps) {
             className="w-full bg-[#8B5CF6] hover:bg-purple-600 transition text-white font-bold py-3 rounded-lg flex items-center justify-center space-x-2 shadow-neon-purple"
           >
             <Brain className="w-4.5 h-4.5" />
-            <span>Confirm & Build My Learning Twin</span>
+            <span>Confirm & Verify Profile</span>
           </button>
         </div>
       )}
@@ -297,7 +387,7 @@ export default function Onboarding({ onOnboardingComplete }: OnboardingProps) {
       {step === 4 && (
         <div className="bg-[#121A2E] border border-[#1E2D4A] rounded-2xl p-8 flex flex-col items-center justify-center shadow-lg text-center space-y-6">
           <Loader2 className="w-12 h-12 text-[#8B5CF6] animate-spin" />
-          <h3 className="text-lg font-bold text-white">Building your Learning Twin...</h3>
+          <h3 className="text-lg font-bold text-white">Initializing Skill Calibration...</h3>
           <p className="text-xs text-gray-400 max-w-sm">Compiling profile modeling parameters, cognitive memory decay multipliers, and recommendation weights.</p>
 
           <div className="bg-[#0A0E1A] border border-[#1E2D4A] rounded-lg p-4 max-w-sm w-full font-mono text-xs text-left space-y-2">
@@ -316,6 +406,61 @@ export default function Onboarding({ onOnboardingComplete }: OnboardingProps) {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* STEP 5: Adaptive Diagnostic Quiz Stage */}
+      {step === 5 && diagQuestion && (
+        <div className="bg-[#121A2E] border border-[#1E2D4A] rounded-2xl p-6 shadow-lg space-y-6">
+          <div className="flex justify-between items-center pb-3 border-b border-[#1E2D4A]">
+            <div className="flex items-center space-x-2">
+              <Award className="w-5 h-5 text-[#3B82F6]" />
+              <h3 className="text-base font-bold text-white">Adaptive Diagnostic Assessment</h3>
+            </div>
+            <span className="text-xs font-mono text-gray-400 bg-[#0A0E1A] px-2 py-1 rounded border border-[#1E2D4A]">
+              Question {diagCount} of 5
+            </span>
+          </div>
+
+          <div className="space-y-4">
+            <h4 className="text-sm font-semibold text-white leading-relaxed">
+              {diagQuestion.questionText}
+            </h4>
+
+            <div className="space-y-2.5">
+              {optionsList.map((opt: string, idx: number) => (
+                <button
+                  key={idx}
+                  onClick={() => setSelectedOptionIdx(idx)}
+                  className={`w-full text-left p-3.5 rounded-lg border text-xs transition duration-150 ${
+                    selectedOptionIdx === idx
+                      ? 'bg-[#3B82F6]/20 border-[#3B82F6] text-white font-semibold'
+                      : 'bg-[#0A0E1A] border-[#1E2D4A] text-gray-300 hover:border-[#3B82F6]/50'
+                  }`}
+                >
+                  <span className="font-mono text-gray-500 mr-2 uppercase">{String.fromCharCode(97 + idx)})</span>
+                  {opt}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <button
+            onClick={handleDiagnosticSubmit}
+            disabled={selectedOptionIdx === null || diagLoading}
+            className={`w-full bg-[#3B82F6] hover:bg-blue-600 transition text-white font-bold py-3 rounded-lg flex items-center justify-center space-x-2 shadow-neon-blue ${
+              (selectedOptionIdx === null || diagLoading) && 'opacity-50 cursor-not-allowed'
+            }`}
+          >
+            {diagLoading ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <>
+                <span>{diagCount === 5 ? 'Finish & Build Twin' : 'Submit Answer'}</span>
+                <ArrowRight className="w-4 h-4" />
+              </>
+            )}
+          </button>
         </div>
       )}
     </div>
