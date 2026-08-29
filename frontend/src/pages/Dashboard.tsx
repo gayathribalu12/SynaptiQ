@@ -21,6 +21,7 @@ export default function Dashboard({ onNavigate, setSelectedSkillId }: DashboardP
   const [recommendation, setRecommendation] = useState<any>(null);
   const [roadmap, setRoadmap] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [aiStatus, setAiStatus] = useState<any>(null);
 
   // Time & Simulator states
   const [studyHours, setStudyHours] = useState(2);
@@ -45,22 +46,25 @@ export default function Dashboard({ onNavigate, setSelectedSkillId }: DashboardP
   const fetchDashboardData = async () => {
     try {
       setLoading(true);
-      const [twinRes, graphRes, recRes, roadmapRes] = await Promise.all([
+      const [twinRes, graphRes, recRes, roadmapRes, statusRes] = await Promise.all([
         fetch('/api/twin/dashboard'),
         fetch('/api/skills/graph'),
         fetch('/api/recommendation'),
-        fetch('/api/roadmap')
+        fetch('/api/roadmap'),
+        fetch('/api/ai/status')
       ]);
 
       const tData = await twinRes.json();
       const gData = await graphRes.json();
       const rData = await recRes.json();
       const roadData = await roadmapRes.json();
+      const sData = await statusRes.json();
 
       setTwinData(tData);
       setGraphData(gData);
       setRecommendation(rData);
       setRoadmap(roadData);
+      setAiStatus(sData);
 
       // Fetch path simulation
       const simRes = await fetch('/api/path/simulate', {
@@ -187,15 +191,31 @@ export default function Dashboard({ onNavigate, setSelectedSkillId }: DashboardP
           <div className="flex items-center space-x-2">
             <span className="text-xs font-bold text-gray-500 font-mono uppercase">TARGET GOAL</span>
             <span className="bg-[#8B5CF6]/20 text-[#8B5CF6] text-[10px] font-bold px-2 py-0.5 rounded border border-[#8B5CF6]/40">Active Path</span>
-            {twinData.groqConfigured ? (
-              <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[9px] px-2 py-0.5 rounded font-mono flex items-center space-x-1">
-                <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse"></span>
-                <span>GROQ_AI: CONNECTED ({twinData.groqModel})</span>
-              </span>
+            {aiStatus ? (
+              <>
+                <span className={`text-[9px] px-2 py-0.5 rounded font-mono flex items-center space-x-1 border ${
+                  aiStatus.text.status === 'connected' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
+                  aiStatus.text.status === 'rate_limited' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20 animate-pulse' :
+                  aiStatus.text.status === 'invalid_model' ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20' :
+                  'bg-amber-500/10 text-amber-400 border-amber-500/20 animate-pulse'
+                }`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${aiStatus.text.status === 'connected' ? 'bg-emerald-400' : 'bg-amber-400 animate-ping'}`}></span>
+                  <span>Text AI: {aiStatus.text.status.toUpperCase()} ({aiStatus.text.model})</span>
+                </span>
+
+                <span className={`text-[9px] px-2 py-0.5 rounded font-mono flex items-center space-x-1 border ${
+                  aiStatus.vision.status === 'connected' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
+                  aiStatus.vision.status === 'rate_limited' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20 animate-pulse' :
+                  aiStatus.vision.status === 'invalid_model' ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20' :
+                  'bg-amber-500/10 text-amber-400 border-amber-500/20 animate-pulse'
+                }`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${aiStatus.vision.status === 'connected' ? 'bg-emerald-400' : 'bg-amber-400 animate-ping'}`}></span>
+                  <span>Vision AI: {aiStatus.vision.status === 'unavailable' ? 'Temporarily unavailable' : aiStatus.vision.status.toUpperCase()} ({aiStatus.vision.model})</span>
+                </span>
+              </>
             ) : (
-              <span className="bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[9px] px-2 py-0.5 rounded font-mono flex items-center space-x-1 animate-pulse">
-                <span className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-ping"></span>
-                <span>LOCAL_FALLBACK (OFFLINE)</span>
+              <span className="bg-[#121A2E] text-gray-400 border border-[#1E2D4A] text-[9px] px-2 py-0.5 rounded font-mono flex items-center space-x-1">
+                <span>Checking AI Status...</span>
               </span>
             )}
           </div>
