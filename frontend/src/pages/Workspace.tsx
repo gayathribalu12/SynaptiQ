@@ -17,6 +17,29 @@ interface WorkspaceProps {
 export default function Workspace({ selectedSkillId, onNavigateBack }: WorkspaceProps) {
   const activeSkill = selectedSkillId || 'programming';
 
+  const get3DLabSimulationId = (skillId: string): 'binary_tree' | 'linked_list' | 'graph' | 'neural_network' | 'gradient_descent' | null => {
+    if (!skillId) return null;
+    const lower = skillId.toLowerCase();
+    
+    if (lower.includes('descent') || lower.includes('gradient') || lower.includes('optimize') || lower.includes('calculus')) {
+      return 'gradient_descent';
+    }
+    if (lower.includes('neural') || lower.includes('ml') || lower.includes('learning') || lower.includes('vision') || lower.includes('ai') || lower.includes('vision')) {
+      return 'neural_network';
+    }
+    if (lower.includes('tree') || lower.includes('bst') || lower.includes('structure') || lower.includes('binary')) {
+      return 'binary_tree';
+    }
+    if (lower.includes('list') || lower.includes('link') || lower.includes('queue') || lower.includes('pointer') || lower.includes('memory') || lower.includes('process') || lower.includes('os') || lower.includes('operating')) {
+      return 'linked_list';
+    }
+    if (lower.includes('graph') || lower.includes('network') || lower.includes('dijkstra') || lower.includes('route') || lower.includes('packet') || lower.includes('robotics') || lower.includes('control') || lower.includes('sensor') || lower.includes('distributed') || lower.includes('acoustics') || lower.includes('embedded') || lower.includes('engineering')) {
+      return 'graph';
+    }
+    // Safe default to help visualize rather than hiding the lab
+    return 'graph';
+  };
+
   const [roadmap, setRoadmap] = useState<any>(null);
   const [recommendation, setRecommendation] = useState<any>(null);
   const [decisionTrace, setDecisionTrace] = useState<any>(null);
@@ -26,6 +49,8 @@ export default function Workspace({ selectedSkillId, onNavigateBack }: Workspace
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
   const [quizResult, setQuizResult] = useState<any>(null);
   const [masteryScore, setMasteryScore] = useState(50);
+  const [careerReadiness, setCareerReadiness] = useState(0);
+  const [dailyBudget, setDailyBudget] = useState(60);
   const [generatedModule, setGeneratedModule] = useState<any>(null);
   const [aiMetadata, setAiMetadata] = useState<any>(null);
 
@@ -77,13 +102,19 @@ export default function Workspace({ selectedSkillId, onNavigateBack }: Workspace
       // Fetch mastery
       const twinRes = await fetch('/api/twin/dashboard');
       const tData = await twinRes.json();
+      setCareerReadiness(tData.careerReadiness || 0);
+      setDailyBudget(tData.dailyAvailability || 60);
       const matchedSkill = tData.skills?.find((s: any) => s.id === recData.skillId);
       if (matchedSkill) {
         setMasteryScore(matchedSkill.mastery * 100);
       }
 
-      // 3. Fetch questions
-      const quizRes = await fetch(`/api/assessment/quiz?skillId=${recData.skillId}`);
+      // 3. Fetch questions dynamically via Groq on-demand quiz generator
+      const quizRes = await fetch('/api/assessment/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ skillId: recData.skillId, difficulty: 'intermediate' })
+      });
       const qData = await quizRes.json();
       setQuestions(qData);
       setCurrentQuestionIndex(0);
@@ -115,12 +146,44 @@ export default function Workspace({ selectedSkillId, onNavigateBack }: Workspace
 
   const handleRunCode = () => {
     setRunningCode(true);
-    setCompilerOutput('Compiling package components...\n[Linker]: verified variable allocations.\n\n');
-    setTimeout(() => {
-      setCompilerOutput(prev => prev + `[Output]: Analyzing variables for: ${recommendation?.skillId || 'programming'}\nProcess terminated successfully with exit code 0.`);
+    setCompilerOutput('');
+    
+    // Capture console.log statements from safe Function evaluation
+    const originalLog = console.log;
+    let logs: string[] = [];
+    console.log = (...args) => {
+      logs.push(args.map(x => typeof x === 'object' ? JSON.stringify(x) : String(x)).join(' '));
+    };
+
+    try {
+      // Evaluate user code in safe block
+      const result = new Function(codeContent)();
+      console.log = originalLog;
+      
+      let out = logs.join('\n');
+      if (result !== undefined) {
+        out += `\n[Return Value]: ${result}`;
+      }
+      out += `\n\nProcess terminated successfully.`;
+      setCompilerOutput(out);
+      
+      // Telemetry update for practicing coding
+      fetch('/api/events', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          eventType: 'resource_completed',
+          skillId: activeSkill,
+          payload: { format: 'code', timeSpent: 45, completed: true }
+        })
+      }).then(() => loadSkillWorkspace());
+      
+    } catch (err: any) {
+      console.log = originalLog;
+      setCompilerOutput(`[Runtime Error]: ${err.message}`);
+    } finally {
       setRunningCode(false);
-      setMasteryScore(prev => Math.min(100, prev + 2)); // Boost mastery on code practice
-    }, 1200);
+    }
   };
 
   const handleSubmitAnswer = async () => {
@@ -150,6 +213,9 @@ export default function Workspace({ selectedSkillId, onNavigateBack }: Workspace
       if (data.correct) {
         confetti({ particleCount: 60, spread: 40, origin: { y: 0.8 } });
       }
+      
+      // Instantly synchronize twin roadmap
+      loadSkillWorkspace();
     } catch (e) {
       console.error(e);
     }
@@ -322,7 +388,7 @@ export default function Workspace({ selectedSkillId, onNavigateBack }: Workspace
               }`}
             >
               <Video className="w-3.5 h-3.5" />
-              <span>AI_VIDEO</span>
+              <span>AI_STORYBOARD</span>
             </button>
             <button
               onClick={() => setActiveTab('3d')}
@@ -375,12 +441,9 @@ export default function Workspace({ selectedSkillId, onNavigateBack }: Workspace
 
             {activeTab === '3d' && (
               <div className="flex-1 min-h-0">
-                {['gradient_descent', 'deep_learning', 'dsa'].includes(activeSkill) ? (
+                {get3DLabSimulationId(activeSkill) ? (
                   <ThreeDLearningLab
-                    simulationId={
-                      activeSkill === 'gradient_descent' ? 'gradient_descent' :
-                      activeSkill === 'deep_learning' ? 'neural_network' : 'binary_tree'
-                    }
+                    simulationId={get3DLabSimulationId(activeSkill)!}
                     onInteractionComplete={handle3DInteraction}
                   />
                 ) : (
@@ -534,6 +597,9 @@ export default function Workspace({ selectedSkillId, onNavigateBack }: Workspace
               setActiveTab('3d');
             }}
             onRefreshPath={loadSkillWorkspace}
+            onLaunchStoryboard={(conceptId) => {
+              setActiveTab('video');
+            }}
           />
         </div>
       </div>
@@ -543,21 +609,37 @@ export default function Workspace({ selectedSkillId, onNavigateBack }: Workspace
         <div className="flex items-center space-x-6 w-full md:w-auto">
           <div className="flex flex-col">
             <span className="text-[9px] text-gray-500 uppercase">Estimated Remaining</span>
-            <span className="text-white font-bold font-mono">4.2 hours to next milestone</span>
+            <span className="text-white font-bold font-mono">{Math.max(0.5, Math.round((0.8 - (masteryScore / 100)) * 12 * 10) / 10)} hours to mastery</span>
           </div>
           <div className="flex flex-col">
             <span className="text-[9px] text-gray-500 uppercase">Daily Study Budget</span>
-            <span className="text-white font-bold font-mono">40 min / 60 min target</span>
+            <span className="text-white font-bold font-mono">{dailyBudget} min target</span>
           </div>
           <div className="flex flex-col">
             <span className="text-[9px] text-gray-500 uppercase">Career Readiness</span>
-            <span className="text-[#3B82F6] font-bold font-mono">Index: 64%</span>
+            <span className="text-[#3B82F6] font-bold font-mono">Index: {careerReadiness}%</span>
           </div>
         </div>
 
         <div className="flex space-x-2 w-full md:w-auto justify-end">
           <button 
-            onClick={onNavigateBack}
+            onClick={async () => {
+              try {
+                await fetch('/api/events', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    eventType: 'lesson_completed',
+                    skillId: activeSkill,
+                    payload: { completed: true }
+                  })
+                });
+                onNavigateBack();
+              } catch (e) {
+                console.error(e);
+                onNavigateBack();
+              }
+            }}
             className="bg-gray-800 hover:bg-gray-700 text-white font-bold px-4 py-2 rounded transition text-[10px]"
           >
             Mark Concept Complete & Next Node

@@ -5,10 +5,24 @@ interface LearningTwinAssistantProps {
   currentConceptId?: string | null;
   onVisualize3D?: (vizId: string) => void;
   onRefreshPath?: () => void;
+  onLaunchStoryboard?: (conceptId: string) => void;
 }
 
-export default function LearningTwinAssistant({ currentConceptId, onVisualize3D, onRefreshPath }: LearningTwinAssistantProps) {
-  const [messages, setMessages] = useState<Array<{ sender: 'user' | 'twin'; text: string; image?: string; concepts?: string[]; issues?: string[]; suggests3D?: boolean }>>([
+export default function LearningTwinAssistant({ currentConceptId, onVisualize3D, onRefreshPath, onLaunchStoryboard }: LearningTwinAssistantProps) {
+  const [messages, setMessages] = useState<Array<{
+    sender: 'user' | 'twin';
+    text: string;
+    image?: string;
+    concepts?: string[];
+    issues?: string[];
+    suggests3D?: boolean;
+    aiMetadata?: {
+      provider: string;
+      model: string | null;
+      fallbackUsed: boolean;
+      latencyMs: number;
+    };
+  }>>([
     {
       sender: 'twin',
       text: "I am your Multimodal Learning Twin. Upload handwritten notes, whiteboard diagrams, or code exceptions, and I'll map them to your path!"
@@ -33,6 +47,40 @@ export default function LearningTwinAssistant({ currentConceptId, onVisualize3D,
   const removeImage = () => {
     setSelectedImage(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handleTeachMeThis = async (concept: string, issue?: string) => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/tutor/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: `Explain the concept "${concept}" ${issue ? `focusing on the issue "${issue}"` : ''} in relation to my career goal. Use a Socratic teaching style.`,
+          topic: concept,
+          mode: 'explain'
+        })
+      });
+      const data = await res.json();
+      setMessages(prev => [...prev, {
+        sender: 'twin',
+        text: data.text,
+        aiMetadata: data.aiMetadata
+      }]);
+    } catch (err: any) {
+      setMessages(prev => [...prev, {
+        sender: 'twin',
+        text: `Error generating lesson: ${err.message}`
+      }]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleMakeThisVisual = async (concept: string) => {
+    if (onLaunchStoryboard) {
+      onLaunchStoryboard(concept);
+    }
   };
 
   const handleSend = async () => {
@@ -74,7 +122,8 @@ export default function LearningTwinAssistant({ currentConceptId, onVisualize3D,
           text: data.tutorResponse || data.analysisText || "I've analyzed the image.",
           concepts: data.detectedConcepts,
           issues: data.detectedIssues,
-          suggests3D: data.suggests3D
+          suggests3D: data.suggests3D,
+          aiMetadata: data.aiMetadata
         }]);
 
         if (data.detectedIssues && data.detectedIssues.length > 0 && onRefreshPath) {
@@ -159,6 +208,41 @@ export default function LearningTwinAssistant({ currentConceptId, onVisualize3D,
                   <Play className="w-3 h-3 fill-current" />
                   <span>Visualize in 3D Learning Lab</span>
                 </button>
+              )}
+
+              {/* Teach Me This & Make This Visual lesson generation triggers */}
+              {m.concepts && m.concepts.length > 0 && (
+                <div className="flex space-x-2 mt-2 pt-1.5 border-t border-white/5">
+                  <button
+                    onClick={() => handleTeachMeThis(m.concepts![0], m.issues?.[0])}
+                    className="flex-1 bg-blue-600/30 hover:bg-blue-600/50 text-[#60A5FA] border border-blue-500/30 text-[9px] py-1 rounded transition text-center font-bold"
+                  >
+                    Teach Me This
+                  </button>
+                  {onLaunchStoryboard && (
+                    <button
+                      onClick={() => handleMakeThisVisual(m.concepts![0])}
+                      className="flex-1 bg-purple-600/30 hover:bg-purple-600/50 text-[#C084FC] border border-purple-500/30 text-[9px] py-1 rounded transition text-center font-bold"
+                    >
+                      Make This Visual
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* AI Metadata Display badge */}
+              {m.aiMetadata && (
+                <div className="text-[8px] text-gray-500 font-mono flex items-center space-x-1 pt-1.5 mt-1.5 border-t border-white/5">
+                  <span>Provider: {m.aiMetadata.provider} ({m.aiMetadata.model || 'local'})</span>
+                  <span>•</span>
+                  <span>Latency: {m.aiMetadata.latencyMs}ms</span>
+                  {m.aiMetadata.fallbackUsed && (
+                    <>
+                      <span>•</span>
+                      <span className="text-amber-500 font-bold">FALLBACK</span>
+                    </>
+                  )}
+                </div>
               )}
             </div>
           </div>

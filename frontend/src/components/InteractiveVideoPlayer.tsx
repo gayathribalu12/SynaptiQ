@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, RotateCcw, Volume2, HelpCircle, CheckCircle2, XCircle, ArrowRight, BookOpen } from 'lucide-react';
+import { Play, Pause, RotateCcw, Volume2, HelpCircle, CheckCircle2, XCircle, ArrowRight, BookOpen, Cpu } from 'lucide-react';
 
 interface Scene {
   sceneNumber: number;
@@ -70,12 +70,37 @@ export default function InteractiveVideoPlayer({ conceptId, onCheckpointAnswer }
       setActiveSceneIdx(0);
       setIsPlaying(false);
       setActiveCheckpoint(null);
+
+      // Track lesson started telemetry event
+      fetch('/api/events', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          eventType: 'lesson_started',
+          skillId: conceptId,
+          payload: { conceptId }
+        })
+      });
     } catch (e) {
       console.error("Failed to load dynamic video:", e);
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (activeSceneIdx > 0 && videoData?.storyboard) {
+      fetch('/api/events', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          eventType: 'scene_completed',
+          skillId: conceptId,
+          payload: { sceneNumber: activeSceneIdx }
+        })
+      });
+    }
+  }, [activeSceneIdx]);
 
   useEffect(() => {
     if (isPlaying) {
@@ -88,6 +113,18 @@ export default function InteractiveVideoPlayer({ conceptId, onCheckpointAnswer }
           if (next >= duration) {
             setIsPlaying(false);
             if (timerRef.current) clearInterval(timerRef.current);
+
+            // Track completion event
+            fetch('/api/events', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                eventType: 'lesson_completed',
+                skillId: conceptId,
+                payload: { completed: true }
+              })
+            });
+
             return duration;
           }
 
@@ -98,15 +135,6 @@ export default function InteractiveVideoPlayer({ conceptId, onCheckpointAnswer }
             if (checkpoint && !checkpointFeedback) {
               setIsPlaying(false);
               setActiveCheckpoint(checkpoint);
-            }
-          }
-
-          // Progress Scene index based on proportional duration steps
-          if (videoData?.storyboard) {
-            const scenesCount = videoData.storyboard.length;
-            const proportionalIdx = Math.floor((next / duration) * scenesCount);
-            if (proportionalIdx < scenesCount) {
-              setActiveSceneIdx(proportionalIdx);
             }
           }
 
@@ -122,6 +150,26 @@ export default function InteractiveVideoPlayer({ conceptId, onCheckpointAnswer }
     };
   }, [isPlaying, videoData, checkpointFeedback]);
 
+  // Synchronize scene index on every currentTime change (seeking or playing) matching chapter thresholds
+  useEffect(() => {
+    if (videoData?.chapters && videoData?.storyboard) {
+      let activeIdx = 0;
+      for (let i = 0; i < videoData.chapters.length; i++) {
+        const [m, s] = videoData.chapters[i].timestamp.split(':').map(Number);
+        const chapSec = m * 60 + s;
+        if (currentTime >= chapSec) {
+          activeIdx = i;
+        } else {
+          break;
+        }
+      }
+      const mappedSceneIdx = Math.min(activeIdx, videoData.storyboard.length - 1);
+      if (mappedSceneIdx !== activeSceneIdx && mappedSceneIdx >= 0) {
+        setActiveSceneIdx(mappedSceneIdx);
+      }
+    }
+  }, [currentTime, videoData, activeSceneIdx]);
+
   const formatTimestamp = (sec: number) => {
     const min = Math.floor(sec / 60);
     const remaining = sec % 60;
@@ -135,6 +183,17 @@ export default function InteractiveVideoPlayer({ conceptId, onCheckpointAnswer }
     if (onCheckpointAnswer) {
       onCheckpointAnswer(correct);
     }
+
+    // Submit checkpoint response telemetry
+    fetch('/api/events', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        eventType: 'checkpoint_answered',
+        skillId: conceptId,
+        payload: { correct, question: activeCheckpoint.questionText }
+      })
+    });
 
     setCheckpointFeedback(correct ? 'correct' : 'incorrect');
   };
@@ -155,6 +214,104 @@ export default function InteractiveVideoPlayer({ conceptId, onCheckpointAnswer }
     );
   }
 
+  const renderVisualStage = (currentScene: Scene | undefined) => {
+    if (!currentScene) return null;
+
+    const visualType = currentScene.visualType || 'analogy';
+
+    if (visualType === 'code_highlight') {
+      return (
+        <div className="w-full h-full overflow-hidden flex flex-col text-left">
+          <span className="text-[8px] text-[#3B82F6] border-b border-[#23355A] pb-1 mb-2 select-none font-mono">CODE_PLAYBACK_DEBUGGER</span>
+          <pre className="text-[10px] text-[#A7F3D0] overflow-x-auto select-all leading-relaxed whitespace-pre font-mono bg-[#090D16] p-3 rounded border border-[#1E2D4A]">
+            {currentScene.codeSnippet || `// Code Context\nconsole.log("Analyzing concept: ${conceptId}");`}
+          </pre>
+        </div>
+      );
+    }
+
+    if (visualType === 'canvas_animation') {
+      return (
+        <div className="w-full h-full flex flex-col items-center justify-center relative select-none">
+          {/* Animated Avatar / Flow simulation */}
+          <div className="flex items-center space-x-6">
+            <div className="relative">
+              {/* Avatar face circle */}
+              <div className={`w-16 h-16 rounded-full bg-gradient-to-r from-blue-500 to-purple-500 flex items-center justify-center shadow-lg border-2 border-white/20 transition-all duration-300 ${isPlaying ? 'scale-110 ring-4 ring-blue-500/30' : ''}`}>
+                <Cpu className="w-8 h-8 text-white animate-pulse" />
+              </div>
+              {/* Wave pulse indicators for narrating avatar */}
+              {isPlaying && (
+                <>
+                  <span className="absolute -inset-1 rounded-full border border-blue-400 animate-ping opacity-75"></span>
+                  <span className="absolute -inset-2.5 rounded-full border border-purple-400 animate-ping opacity-50"></span>
+                </>
+              )}
+            </div>
+            
+            {/* Action flow description box */}
+            <div className="flex flex-col text-left max-w-xs space-y-1">
+              <span className="text-[10px] font-bold text-white uppercase tracking-wider">{currentScene.title}</span>
+              <p className="text-[9px] text-gray-400 leading-normal font-mono">{currentScene.sceneDescription}</p>
+              <div className="flex items-center space-x-1.5 pt-1">
+                <span className={`w-2 h-2 rounded-full ${isPlaying ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`}></span>
+                <span className="text-[8px] text-gray-500 font-mono">{isPlaying ? 'AVATAR_ACTIVE_EXPLAINING' : 'PLAYER_PAUSED'}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (visualType === 'chart') {
+      return (
+        <div className="w-full h-full flex flex-col text-left">
+          <span className="text-[8px] text-[#3B82F6] border-b border-[#23355A] pb-1 mb-2 select-none font-mono">DYNAMICAL_METRICS_CHART</span>
+          <div className="flex-1 flex items-end justify-around px-4 pt-4 border-b border-[#23355A]/50 pb-2">
+            {[45, 80, 60, 95, 75].map((val, idx) => {
+              // Animate chart bars if playing
+              const animatedHeight = isPlaying 
+                ? Math.min(100, Math.max(10, val + Math.sin(currentTime + idx) * 15)) 
+                : val;
+              return (
+                <div key={idx} className="flex flex-col items-center w-8 space-y-1">
+                  <span className="text-[8px] text-gray-500 font-mono">{Math.round(animatedHeight)}%</span>
+                  <div 
+                    className="w-4 bg-gradient-to-t from-blue-600 to-purple-500 rounded-t transition-all duration-300"
+                    style={{ height: `${animatedHeight * 0.7}px` }}
+                  ></div>
+                  <span className="text-[8px] text-gray-400 font-mono font-bold">C{idx+1}</span>
+                </div>
+              );
+            })}
+          </div>
+          <p className="text-[9px] text-gray-500 mt-1 text-center font-mono">{currentScene.sceneDescription}</p>
+        </div>
+      );
+    }
+
+    // Default to 'analogy' visual layout
+    return (
+      <div className="w-full h-full flex flex-col justify-between text-left p-1">
+        <div className="flex items-center justify-between border-b border-[#23355A] pb-1 mb-2">
+          <span className="text-[8px] text-[#3B82F6] font-mono">EXPLICIT_ANALOGY_MAPPER</span>
+          <span className="text-[8px] text-purple-400 font-mono font-bold">ANALYSIS_ACTIVE</span>
+        </div>
+        <div className="flex-1 flex items-center justify-center space-x-4">
+          <div className="bg-[#090D16] border border-[#22355A] p-2.5 rounded max-w-sm flex items-center space-x-3 w-full shadow-md">
+            <div className="p-1.5 bg-blue-500/10 rounded">
+              <BookOpen className="w-5 h-5 text-blue-400 animate-bounce" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h5 className="text-[9px] font-bold text-white truncate">{currentScene.title}</h5>
+              <p className="text-[8px] text-gray-400 leading-normal truncate">{currentScene.sceneDescription}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const duration = videoData.durationSeconds || 120;
   const currentScene = videoData.storyboard?.[activeSceneIdx] || videoData.storyboard?.[0];
 
@@ -166,7 +323,7 @@ export default function InteractiveVideoPlayer({ conceptId, onCheckpointAnswer }
         <div className="flex justify-between items-center text-[10px] text-gray-400 z-10">
           <div className="flex items-center space-x-1">
             <span className="bg-[#EF4444] w-1.5 h-1.5 rounded-full animate-ping"></span>
-            <span className="font-extrabold uppercase tracking-wider text-red-500">dynamic_ai_video: {videoData.title}</span>
+            <span className="font-extrabold uppercase tracking-wider text-red-500">AI Interactive Lesson Storyboard: {videoData.title}</span>
           </div>
           <span>Format: SCENE_BASED_RENDER</span>
         </div>
@@ -236,20 +393,7 @@ export default function InteractiveVideoPlayer({ conceptId, onCheckpointAnswer }
               {/* Visual scene animation */}
               <div className="flex-1 bg-[#1A233C] border border-[#23355A] rounded-lg h-44 w-full flex flex-col items-center justify-center relative p-3 shadow-inner">
                 <span className="absolute top-2 left-2 text-[8px] text-gray-500">SCENE_GRAPHICS</span>
-                {currentScene?.visualType === 'code_highlight' ? (
-                  <div className="w-full h-full overflow-hidden flex flex-col">
-                    <span className="text-[8px] text-[#3B82F6] border-b border-[#23355A] pb-1 mb-1 select-none">CODE_DEBUGGER</span>
-                    <pre className="text-[9px] text-[#A7F3D0] overflow-x-auto select-all leading-normal whitespace-pre">
-                      {currentScene.codeSnippet}
-                    </pre>
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center space-y-2 text-center">
-                    <BookOpen className="w-8 h-8 text-[#3B82F6] animate-bounce" />
-                    <span className="text-[10px] text-white font-bold">{currentScene?.title || 'Visual Scene'}</span>
-                    <p className="text-[9px] text-gray-400 max-w-xs leading-normal">{currentScene?.sceneDescription}</p>
-                  </div>
-                )}
+                {renderVisualStage(currentScene)}
               </div>
             </div>
           )}

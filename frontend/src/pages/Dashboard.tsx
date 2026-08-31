@@ -22,6 +22,9 @@ export default function Dashboard({ onNavigate, setSelectedSkillId }: DashboardP
   const [roadmap, setRoadmap] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [aiStatus, setAiStatus] = useState<any>(null);
+  const [activeProject, setActiveProject] = useState<any>(null);
+  const [projectLoading, setProjectLoading] = useState(false);
+  const [projectSubmission, setProjectSubmission] = useState('');
 
   // Time & Simulator states
   const [studyHours, setStudyHours] = useState(2);
@@ -75,6 +78,12 @@ export default function Dashboard({ onNavigate, setSelectedSkillId }: DashboardP
       const simData = await simRes.json();
       setSimulation(simData);
 
+      // Fetch active project
+      const projRes = await fetch('/api/projects/active');
+      if (projRes.ok) {
+        const pData = await projRes.json();
+        setActiveProject(pData);
+      }
     } catch (err) {
       console.warn("Backend connection skipped, loading mock twin.");
       // offline fallback
@@ -135,6 +144,53 @@ export default function Dashboard({ onNavigate, setSelectedSkillId }: DashboardP
     fetchDashboardData();
   }, []);
 
+  const handleGenerateProject = async () => {
+    setProjectLoading(true);
+    try {
+      const res = await fetch('/api/projects/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ skillId: recommendation?.skillId || 'ml' })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setActiveProject(data);
+        fetchDashboardData();
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setProjectLoading(false);
+    }
+  };
+
+  const handleCompleteProject = async () => {
+    setProjectLoading(true);
+    try {
+      const res = await fetch('/api/projects/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: activeProject.id,
+          submissionText: projectSubmission,
+          telemetry: {
+            timeSpentSec: 3600,
+            milestonesCompleted: activeProject.milestones?.length || 2
+          }
+        })
+      });
+      if (res.ok) {
+        setActiveProject(null);
+        setProjectSubmission('');
+        fetchDashboardData();
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setProjectLoading(false);
+    }
+  };
+
   const handleSelectSkill = (skillId: string) => {
     setSelectedSkillId(skillId);
     onNavigate('workspace');
@@ -160,9 +216,9 @@ export default function Dashboard({ onNavigate, setSelectedSkillId }: DashboardP
         <div className="bg-[#121A2E] border border-[#1E2D4A] rounded-2xl p-8 shadow-neon-blue space-y-6 flex flex-col items-center">
           <Brain className="w-16 h-16 text-[#3B82F6] animate-pulse" />
           <div className="space-y-2">
-            <h2 className="text-xl font-bold text-white">Design Your Personalized Journey</h2>
-            <p className="text-sm text-gray-400">
-              SynaptiQ has zero predefined paths. Tell us what career, technologies, or custom engineering goals you are pursuing, and our AI will build your roadmap.
+            <h2 className="text-xl font-bold text-white">No learning path yet.</h2>
+            <p className="text-sm text-gray-400 font-mono">
+              Tell SynaptiQ what you want to achieve.
             </p>
           </div>
           
@@ -246,8 +302,8 @@ export default function Dashboard({ onNavigate, setSelectedSkillId }: DashboardP
       {/* 2. Top Telemetry Metrics */}
       <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
         {[
-          { title: 'Overall Mastery', value: `${twinData.overallMastery}%`, icon: <Award className="w-4 h-4 text-[#8B5CF6]" /> },
-          { title: 'Career Readiness', value: `${twinData.careerReadiness}%`, icon: <CheckCircle2 className="w-4 h-4 text-emerald-400" /> },
+          { title: 'Overall Mastery', value: isNaN(Number(twinData.overallMastery)) ? String(twinData.overallMastery) : `${twinData.overallMastery}%`, icon: <Award className="w-4 h-4 text-[#8B5CF6]" /> },
+          { title: 'Career Readiness', value: isNaN(Number(twinData.careerReadiness)) ? String(twinData.careerReadiness) : `${twinData.careerReadiness}%`, icon: <CheckCircle2 className="w-4 h-4 text-emerald-400" /> },
           { title: 'Learning Velocity', value: `+${twinData.learningVelocity}%`, icon: <ArrowUpRight className="w-4 h-4 text-blue-400" /> },
           { title: 'Retention Est.', value: `${twinData.retention}%`, icon: <Calendar className="w-4 h-4 text-amber-400" /> },
           { title: 'Daily Streak', value: `${twinData.streak} days`, icon: <Flame className="w-4 h-4 text-red-400" /> },
@@ -265,7 +321,7 @@ export default function Dashboard({ onNavigate, setSelectedSkillId }: DashboardP
       </div>
 
       {/* 3. Next Best Action Explainability card */}
-      {recommendation && (
+      {recommendation && recommendation.nextAction !== 'project' && (
         <div className="bg-gradient-to-r from-[#121A2E] to-[#16132D] border border-violet-900/50 rounded-xl p-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-neon-purple relative overflow-hidden">
           <div className="space-y-1 relative z-10">
             <div className="flex items-center space-x-2">
@@ -287,6 +343,94 @@ export default function Dashboard({ onNavigate, setSelectedSkillId }: DashboardP
             <PlayCircle className="w-4 h-4" />
             <span>Launch Recommended {recommendation.recommendedFormat?.toUpperCase()} Lab</span>
           </button>
+        </div>
+      )}
+
+      {/* 3.1 Active Capstone Project Card */}
+      {activeProject && (
+        <div className="bg-[#121A2E] border border-blue-500/30 rounded-xl p-5 shadow-neon-blue space-y-4">
+          <div className="flex justify-between items-center pb-2 border-b border-[#1E2D4A]">
+            <div className="flex items-center space-x-2">
+              <Sparkles className="w-5 h-5 text-blue-400 animate-pulse" />
+              <h2 className="text-sm font-bold font-mono text-white">ACTIVE CAPSTONE PROJECT: {activeProject.title}</h2>
+            </div>
+            <span className="bg-blue-500/20 text-[#60A5FA] border border-blue-500/30 text-[9px] px-2 py-0.5 rounded uppercase font-bold tracking-wider font-mono">
+              {activeProject.difficulty}
+            </span>
+          </div>
+
+          <div className="space-y-3 text-xs">
+            <div>
+              <span className="text-[10px] text-gray-500 font-mono block uppercase">Problem Statement</span>
+              <p className="text-gray-300 leading-relaxed font-sans mt-0.5">{activeProject.problemStatement}</p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <span className="text-[10px] text-gray-500 font-mono block uppercase mb-1 font-bold">Key Requirements</span>
+                <ul className="list-disc pl-4 text-gray-400 space-y-1 font-sans">
+                  {activeProject.requirements.map((r: string, idx: number) => (
+                    <li key={idx}>{r}</li>
+                  ))}
+                </ul>
+              </div>
+
+              <div>
+                <span className="text-[10px] text-gray-500 font-mono block uppercase mb-1 font-bold">Project Milestones</span>
+                <div className="space-y-1.5 font-mono text-[11px] text-gray-300">
+                  {activeProject.milestones.map((m: string, idx: number) => (
+                    <div key={idx} className="flex items-center space-x-2">
+                      <input type="checkbox" defaultChecked className="rounded border-gray-700 bg-slate-900 text-blue-500" disabled />
+                      <span>{m}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-2 pt-3 border-t border-[#1E2D4A]/50">
+            <label className="text-[10px] font-bold font-mono text-gray-400 uppercase block">Project Evidence / Submission Code</label>
+            <textarea
+              value={projectSubmission}
+              onChange={e => setProjectSubmission(e.target.value)}
+              placeholder="Paste your source code, system diagram outline, or explain how you satisfied the requirements..."
+              rows={4}
+              className="w-full bg-[#0A0E1A] border border-[#1E2D4A] text-xs font-mono rounded p-2 text-white placeholder-gray-600 focus:outline-none focus:border-[#3B82F6]"
+            />
+          </div>
+
+          <div className="pt-3 border-t border-[#1E2D4A] flex justify-end">
+            <button
+              onClick={handleCompleteProject}
+              disabled={projectLoading || !projectSubmission.trim()}
+              className="bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-bold py-2 px-6 rounded-lg text-xs shadow-md transition disabled:opacity-50"
+            >
+              {projectLoading ? 'Submitting Evaluation...' : 'Complete Project & Update Learning Twin'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 3.2 Capstone Project Trigger Card */}
+      {recommendation?.nextAction === 'project' && !activeProject && (
+        <div className="bg-[#121A2E] border border-violet-500/30 rounded-xl p-5 shadow-neon-purple space-y-3">
+          <div className="flex items-center space-x-2">
+            <Sparkles className="w-5 h-5 text-violet-400 animate-pulse" />
+            <h2 className="text-sm font-bold font-mono text-white">AI CAPSTONE PROJECT OPPORTUNITY</h2>
+          </div>
+          <p className="text-xs text-gray-300 font-sans">
+            You have achieved sufficient prerequisite mastery! Your Learning Twin recommends consolidating your skills through a tailored capstone project.
+          </p>
+          <div className="flex justify-end">
+            <button
+              onClick={handleGenerateProject}
+              disabled={projectLoading}
+              className="bg-violet-600 hover:bg-violet-700 text-white font-semibold text-xs px-5 py-2.5 rounded-lg shadow-md transition disabled:opacity-50"
+            >
+              {projectLoading ? 'Compiling Custom Project Outline...' : 'Generate My Custom Capstone Project'}
+            </button>
+          </div>
         </div>
       )}
 

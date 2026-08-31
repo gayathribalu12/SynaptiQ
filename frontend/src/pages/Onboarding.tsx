@@ -8,12 +8,12 @@ interface OnboardingProps {
 export default function Onboarding({ onOnboardingComplete }: OnboardingProps) {
   const [step, setStep] = useState(1); // 1: form, 2: processing extraction, 3: verify data, 4: twin creation, 5: adaptive diagnostic quiz
   const [formData, setFormData] = useState({
-    name: 'Alex',
+    name: '',
     educationLevel: 'undergraduate',
-    branchField: 'Computer Science',
-    experienceLevel: 'intermediate',
-    goal: 'I know basic Python and Java. I want to become an AI engineer and get an internship in six months.',
-    timeline: '6',
+    branchField: '',
+    experienceLevel: 'beginner',
+    goal: '',
+    timeline: '',
     dailyAvailability: '60',
   });
 
@@ -65,7 +65,7 @@ export default function Onboarding({ onOnboardingComplete }: OnboardingProps) {
         body: JSON.stringify({ goal: formData.goal })
       });
       const data = await res.json();
-      setExtractedData(data);
+      setExtractedData(data.data || data);
     } catch (err) {
       setExtractedData({
         career_goal: 'AI Engineer',
@@ -113,7 +113,8 @@ export default function Onboarding({ onOnboardingComplete }: OnboardingProps) {
   const fetchNextDiagnostic = async () => {
     try {
       setDiagLoading(true);
-      const res = await fetch('/api/assessment/diagnostic-next?skillId=sql');
+      const skill = extractedData?.missing_skills?.[0] || extractedData?.target_skills?.[0] || 'programming';
+      const res = await fetch(`/api/assessment/diagnostic-next?skillId=${skill}`);
       const question = await res.json();
       setDiagQuestion(question);
       setSelectedOptionIdx(null);
@@ -137,16 +138,17 @@ export default function Onboarding({ onOnboardingComplete }: OnboardingProps) {
     if (selectedOptionIdx === null || !diagQuestion) return;
 
     const correct = selectedOptionIdx === diagQuestion.correctOption;
+    const skill = extractedData?.missing_skills?.[0] || extractedData?.target_skills?.[0] || 'programming';
 
     try {
       setDiagLoading(true);
       // Post event to update BKT/IRT calibration
-      await fetch('/api/learning-event', {
+      await fetch('/api/events', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           eventType: 'question_answered',
-          skillId: diagQuestion.skillId || 'sql',
+          skillId: diagQuestion.skillId || skill,
           payload: {
             questionId: diagQuestion.id,
             correct,
